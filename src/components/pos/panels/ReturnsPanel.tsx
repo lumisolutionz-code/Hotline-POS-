@@ -1,0 +1,440 @@
+import { useState, useEffect } from "react";
+import { apiGet, apiPost } from "../../../lib/api";
+import { PermissionOverrideModal } from "../modals/PermissionOverrideModal";
+import type { ReturnsPanelProps } from "../../../types/pos";
+
+export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps): JSX.Element {
+  const [saleNumber, setSaleNumber] = useState<string>("");
+  const [sale, setSale] = useState<any>(null);
+  const [selectedItems, setSelectedItems] = useState<{
+    [key: string]: { selected: boolean; quantity: number; condition: string; destination: string };
+  }>({});
+  const [reason, setReason] = useState<string>("CHANGED_MIND");
+  const [resolution, setResolution] = useState<"REFUND" | "EXCHANGE">("REFUND");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [searchLoading, setSearchLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [showOverrideModal, setShowOverrideModal] = useState<boolean>(false);
+  const [overrideAction, setOverrideAction] = useState<string>("");
+  const [overrideIdParam, setOverrideIdParam] = useState<string | undefined>(undefined);
+
+
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showDropdown, setShowDropdown] = useState<boolean>(false);
+
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (saleNumber.trim().length >= 2 && !sale) {
+        searchSalesDropdown(saleNumber.trim());
+      } else {
+        setSearchResults([]);
+        setShowDropdown(false);
+      }
+    }, 300);
+    return () => clearTimeout(delayDebounceFn);
+  }, [saleNumber, sale]);
+
+  const searchSalesDropdown = async (query: string) => {
+    try {
+      const response = await apiGet<any>(`/sales/search?q=${query}`);
+      if (response.status === "success" && response.data?.sales) {
+        setSearchResults(response.data.sales);
+        setShowDropdown(true);
+      }
+    } catch (err) {
+      console.error("Failed to fetch search results:", err);
+    }
+  };
+
+  const searchSale = async (specificSaleNumber?: string) => {
+    const numberToSearch = typeof specificSaleNumber === 'string' ? specificSaleNumber : saleNumber;
+    if (!numberToSearch.trim()) return;
+    setSearchLoading(true);
+    setError(null);
+    setSale(null);
+    setSelectedItems({});
+    setResolution("REFUND");
+    setShowDropdown(false);
+
+    try {
+      const response = await apiGet<any>(`/sales/number/${numberToSearch.trim()}`);
+      if (response.status === "success" && response.data?.sale) {
+        const foundSale = response.data.sale;
+        setSale(foundSale);
+        if (typeof specificSaleNumber === 'string') setSaleNumber(foundSale.saleNumber);
+        const initialSelection: {
+          [key: string]: { selected: boolean; quantity: number; condition: string; destination: string };
+        } = {};
+        foundSale.items?.forEach((item: any) => {
+          initialSelection[item._id] = {
+            selected: false,
+            quantity: item.quantity,
+            condition: "GOOD",
+            destination: "RETURN_TO_STOCK",
+          };
+        });
+        setSelectedItems(initialSelection);
+      } else {
+        setError("Sale not found");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to find sale");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const toggleItem = (itemId: string) => {
+    setSelectedItems((prev) => ({
+      ...prev,
+      [itemId]: { ...prev[itemId], selected: !prev[itemId]?.selected },
+    }));
+  };
+
+  const updateItemReturnData = (itemId: string, field: string, value: any) => {
+    setSelectedItems((prev) => ({
+      ...prev,
+      [itemId]: { ...prev[itemId], [field]: value },
+    }));
+  };
+
+  const calculateRefund = () => {
+    if (!sale?.items) return 0;
+    return sale.items.reduce((total: number, item: any) => {
+      const selection = selectedItems[item._id];
+      if (selection?.selected) {
+        return total + (item.unitPrice || 0) * selection.quantity;
+      }
+      return total;
+    }, 0);
+  };
+
+  const refundAmount = calculateRefund();
+  const hasSelectedItems = Object.values(selectedItems).some((s) => s.selected);
+
+  const processReturn = async (overrideId?: string) => {
+    if (!sale) return;
+
+    // Local 7-day expiration check
+    const daysSinceSale = Math.floor((Date.now() - new Date(sale.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    const isExpired = daysSinceSale > 7;
+
+    if (isExpired && !overrideId && !overrideIdParam) {
+      setOverrideAction(resolution === "EXCHANGE" ? "EXCHANGE_EXPIRED" : "RETURN_EXPIRED");
+      setShowOverrideModal(true);
+      setError("Return window of 7 days has expired. Manager authorization required.");
+      return;
+    }
+
+    const currentOverrideId = overrideId || overrideIdParam;
+
+    const itemsToReturn = sale.items
+      .filter((item: any) => selectedItems[item._id]?.selected)
+      .map((item: any) => ({
+        saleItemId: item._id,
+        quantity: selectedItems[item._id]?.quantity || item.quantity,
+        condition: selectedItems[item._id]?.condition,
+        destination: selectedItems[item._id]?.destination,
+      }));
+
+    if (itemsToReturn.length === 0) {
+      setError("Please select at least one item to return");
+      return;
+    }
+
+    if (resolution === "EXCHANGE") {
+      if (onInitiateExchange) {
+        onInitiateExchange(
+          {
+            originalSaleId: sale._id,
+            items: itemsToReturn,
+            reason,
+            returnType: "EXCHANGE",
+            authorizationOverrideId: currentOverrideId,
+          },
+          refundAmount
+        );
+      }
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const payload = {
+        originalSaleId: sale._id,
+        returnType: resolution,
+        items: itemsToReturn,
+        reason,
+        refundMethod: "CASH",
+        authorizationOverrideId: currentOverrideId,
+      };
+
+      const response = await apiPost<any>("/returns", payload);
+      if (response.status === "success") {
+        setSuccess(
+          `Return processed! Refund: Rs. ${response.data?.return?.refundAmount?.toFixed(2) || response.data?.summary?.totalRefund?.toFixed(2)}`
+        );
+        setTimeout(() => {
+          setSale(null);
+          setSelectedItems({});
+          setSaleNumber("");
+          setSuccess(null);
+          setOverrideIdParam(undefined);
+        }, 3000);
+      } else {
+        if (response.requiresOverride || response.returnWindowExpired) {
+          setOverrideAction("RETURN_EXPIRED");
+          setShowOverrideModal(true);
+          setError(response.message || "Manager authorization required.");
+        } else {
+          throw new Error(response.message || "Failed to process return");
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to process return");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 dark:bg-slate-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl w-full max-w-4xl border border-sky-200/50 shadow-2xl overflow-hidden min-h-[550px] max-h-[95vh] flex flex-col rounded-2xl">
+        <div className="p-4 border-b border-sky-200/50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl flex items-center justify-between">
+          <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2 dark:text-white">
+            ↩️ Process Return / Exchange
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors dark:text-slate-400"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 p-5 overflow-y-auto flex flex-col md:flex-row gap-6">
+          {/* Left Column: Original Sale */}
+          <div className="flex-1 space-y-4">
+            <div className="flex gap-2 relative">
+              <input
+                type="text"
+                value={saleNumber}
+                onChange={(e) => {
+                  setSaleNumber(e.target.value);
+                  if (sale) setSale(null);
+                }}
+                placeholder="Enter Sale Number (e.g., SL-20260128-0001)"
+                className="flex-1 px-4 py-2.5 bg-white border border-sky-200/50 rounded-xl text-slate-800 placeholder-slate-400 shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:bg-slate-800 dark:text-white"
+                onKeyDown={(e) => e.key === "Enter" && searchSale()}
+                onFocus={() => { if (searchResults.length > 0 && !sale) setShowDropdown(true); }}
+                onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+              />
+              <button
+                onClick={() => searchSale()}
+                disabled={searchLoading || !saleNumber.trim()}
+                className="px-6 py-2.5 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+              >
+                {searchLoading ? "⏳" : "🔍 Find"}
+              </button>
+
+              {/* Autocomplete Dropdown */}
+              {showDropdown && searchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-28 mt-1 bg-white dark:bg-slate-800 border border-sky-200/50 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto">
+                  {searchResults.map((result) => (
+                    <div
+                      key={result._id}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        searchSale(result.saleNumber);
+                      }}
+                      className="p-3 border-b border-slate-100 dark:border-slate-700 hover:bg-sky-50 dark:hover:bg-slate-700 cursor-pointer transition-colors"
+                    >
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-mono text-sm text-sky-600 dark:text-sky-400 font-bold">{result.saleNumber}</span>
+                        <span className="text-xs text-slate-500 dark:text-slate-400">{new Date(result.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300">
+                        <span>{result.customer?.name || "Walk-in Customer"} {result.customer?.phone ? `(${result.customer.phone})` : ""}</span>
+                        <span className="font-semibold">Rs. {result.total?.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600">{error}</div>}
+            {success && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-600">{success}</div>}
+
+            {sale && (
+              <>
+                <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-xl p-4 border border-sky-200/50 shadow-sm">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-slate-500 dark:text-slate-400">Sale #</span>
+                    <span className="text-slate-800 font-mono dark:text-white">{sale.saleNumber}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 dark:text-slate-400">Date</span>
+                    <span className="text-slate-800 dark:text-white">{new Date(sale.createdAt).toLocaleDateString()}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-slate-600 uppercase dark:text-slate-400">Select Items to Return</h4>
+                  {sale.items?.map((item: any) => {
+                    const remaining = item.quantity - (item.returnedQuantity || 0);
+                    if (remaining <= 0) return null;
+                    return (
+                      <div
+                        key={item._id}
+                        className={`bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border-2 transition-all shadow-sm ${selectedItems[item._id]?.selected ? "border-sky-500" : "border-sky-100"}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            onClick={() => toggleItem(item._id)}
+                            className={`mt-1 w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer ${selectedItems[item._id]?.selected ? "bg-sky-500 border-sky-500" : "border-slate-300"}`}
+                          >
+                            {selectedItems[item._id]?.selected && <span className="text-white text-xs">✓</span>}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-slate-800 font-medium dark:text-white">{item.productName}</p>
+                            <p className="text-slate-500 text-sm dark:text-slate-400">Rs. {item.unitPrice?.toFixed(2)} × {remaining} (Max)</p>
+                            
+                            {selectedItems[item._id]?.selected && (
+                              <div className="mt-3 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs font-semibold text-slate-500">Return Qty:</label>
+                                  <span className="w-16 text-center bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded py-1 text-slate-700 dark:text-slate-300 text-sm font-medium select-none cursor-default block">
+                                    {selectedItems[item._id]?.quantity || 1}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Condition:</label>
+                                  <select 
+                                    value={selectedItems[item._id]?.condition || "GOOD"}
+                                    onChange={(e) => {
+                                      updateItemReturnData(item._id, "condition", e.target.value);
+                                      updateItemReturnData(item._id, "destination", e.target.value === "DEFECTIVE" ? "DEFECTIVE_INVENTORY" : "RETURN_TO_STOCK");
+                                    }}
+                                    className="flex-1 bg-sky-50 dark:bg-slate-800 border border-sky-200 dark:border-slate-700 rounded py-1 px-2 text-slate-800 dark:text-white text-sm"
+                                  >
+                                    <option value="GOOD" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Good (Return to Stock)</option>
+                                    <option value="DEFECTIVE" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Defective (Move to Defective Inventory)</option>
+                                  </select>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-slate-600 uppercase block mb-2 dark:text-slate-400">Return Reason</label>
+                  <select
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-white border border-sky-200/50 rounded-xl text-slate-800 shadow-sm focus:border-sky-500 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="DEFECTIVE" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Defective Product</option>
+                    <option value="WRONG_ITEM" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Wrong Item</option>
+                    <option value="CHANGED_MIND" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Customer Changed Mind</option>
+                    <option value="NOT_AS_DESCRIBED" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Not as Described</option>
+                    <option value="OTHER" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Other</option>
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Right Column: Resolution & Exchange */}
+          {sale && hasSelectedItems && (
+            <div className="flex-1 flex flex-col space-y-4 bg-slate-50/50 dark:bg-slate-800/30 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+              <h4 className="text-sm font-semibold text-slate-600 uppercase dark:text-slate-400">Resolution</h4>
+              <div className="flex gap-2 p-1 bg-slate-200/50 dark:bg-slate-700 rounded-lg">
+                <button
+                  onClick={() => setResolution("REFUND")}
+                  className={`flex-1 py-2 rounded-md font-medium text-sm transition-all ${resolution === "REFUND" ? "bg-white dark:bg-slate-600 shadow text-slate-800 dark:text-white" : "text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-600/50 hover:text-slate-700 dark:hover:text-slate-200"}`}
+                >
+                  Issue Refund
+                </button>
+                <button
+                  onClick={() => setResolution("EXCHANGE")}
+                  className={`flex-1 py-2 rounded-md font-medium text-sm transition-all ${resolution === "EXCHANGE" ? "bg-white dark:bg-slate-600 shadow text-sky-600 dark:text-sky-400" : "text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-600/50 hover:text-sky-600 dark:hover:text-sky-400"}`}
+                >
+                  Exchange Items
+                </button>
+              </div>
+
+              <div className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-slate-500 font-medium">Return Value</span>
+                  <span className="text-lg font-bold text-sky-600">Rs. {refundAmount.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {resolution === "EXCHANGE" && (
+                <div className="flex-1 flex flex-col items-center justify-center min-h-[200px] text-center p-6 border-2 border-dashed border-sky-200 dark:border-slate-700 rounded-xl mt-4 bg-sky-50/50 dark:bg-slate-800/50">
+                  <div className="w-16 h-16 bg-sky-100 dark:bg-slate-700 rounded-full flex items-center justify-center mb-4 text-2xl">
+                    🛒
+                  </div>
+                  <h4 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Continue in Main Order</h4>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    Click "Add Exchange to Order" below to add this return credit to the current order. 
+                    Then, you can use the main search to add the new exchange items.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-sky-200/50 flex gap-3 bg-white/80 dark:bg-slate-800/80">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all dark:bg-slate-800 dark:hover:bg-slate-600 dark:text-slate-300 font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => processReturn()}
+            disabled={loading || !hasSelectedItems}
+            className="flex-1 py-3 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
+          >
+            {loading ? "⏳ Processing..." : resolution === "EXCHANGE" ? "🔄 Add Exchange to Order" : "↩️ Issue Refund"}
+          </button>
+        </div>
+      </div>
+      
+      {showOverrideModal && (
+        <PermissionOverrideModal
+          permission={overrideAction}
+          onClose={() => setShowOverrideModal(false)}
+          onSuccess={(overrideId) => {
+            setShowOverrideModal(false);
+            setOverrideIdParam(overrideId);
+            processReturn(overrideId);
+          }}
+        />
+      )}
+    </div>
+  );
+}
