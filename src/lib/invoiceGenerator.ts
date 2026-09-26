@@ -283,6 +283,9 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
       .no-print {
         display: none !important;
       }
+      .pre-printed {
+        visibility: hidden !important;
+      }
       table.invoice-table th {
         background-color: #4a6785 !important;
         -webkit-print-color-adjust: exact;
@@ -299,7 +302,7 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
 <body>
   <div class="invoice-container">
     <!-- Header Row -->
-    <div class="header-row">
+    <div class="header-row pre-printed">
       <div class="brand-logo-wrap">
         <img class="brand-logo-img" src="${inv.logoUrl || HOTLINE_LOGO_DATA_URL}" alt="New Challenge (Pvt) Ltd" />
       </div>
@@ -467,7 +470,7 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
     </div>
 
     <!-- Terms & Conditions -->
-    <div class="terms-section">
+    <div class="terms-section pre-printed">
       <div class="terms-title">Terms and Conditions</div>
       <div class="terms-text">
         ${
@@ -478,7 +481,7 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
     </div>
 
     <!-- Footer Bar -->
-    <div class="footer-bar">
+    <div class="footer-bar pre-printed">
       <div class="footer-seal">
         <span>🔒</span>
         <span>New Challenge (Pvt) Ltd • Official Computer Generated Invoice</span>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../../../lib/api";
 import { PermissionOverrideModal } from "../modals/PermissionOverrideModal";
+import { generateSaleBillHtml, generateSaleInvoiceHtml, printDocument } from "../../../lib/invoiceGenerator";
 import type { SalesPanelProps } from "../../../types/pos";
 
 export function SalesPanel({
@@ -184,7 +185,31 @@ export function SalesPanel({
                           </div>
                         </div>
                       ) : (
-                        <button onClick={() => setVoidingSaleId(sale._id)} className="text-xs text-red-400 hover:text-red-300">Void Sale</button>
+                        <div className="flex gap-4 items-center">
+                          <button onClick={() => setVoidingSaleId(sale._id)} className="text-xs text-red-400 hover:text-red-300">Void Sale</button>
+                          <button 
+                            onClick={() => {
+                              const customerName = sale.customer?.name || '';
+                              const customerPhone = sale.customer?.phone || '';
+                              const html = generateSaleBillHtml(sale, undefined, customerName, customerPhone);
+                              printDocument(html, `Receipt-${sale.saleNumber}`, "bill");
+                            }} 
+                            className="text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            Print Receipt
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const customerName = sale.customer?.name || '';
+                              const customerPhone = sale.customer?.phone || '';
+                              const html = generateSaleInvoiceHtml(sale, undefined, customerName, customerPhone);
+                              printDocument(html, `Invoice-${sale.saleNumber}`, "invoice");
+                            }} 
+                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                          >
+                            Print Invoice
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
