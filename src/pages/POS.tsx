@@ -2192,7 +2192,7 @@ export default function POS(): JSX.Element {
                                     newCart[index].discountAmount = val;
                                     setCart(newCart);
                                   } else if (e.target.value === "") {
-                                    // @ts-ignore
+                                    // @ts-expect-error - Expected number but resetting with empty string
                                     newCart[index].discountAmount = "";
                                     setCart(newCart);
                                   }
