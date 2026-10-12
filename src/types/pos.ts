@@ -86,6 +86,11 @@ export interface CartItem extends Product {
   discountAmount?: number;
   originalPrice?: number;
   unitPrice?: number;
+  isSimReload?: boolean;
+  simReloadType?: "SIM" | "RELOAD";
+  simReloadId?: string;
+  provider?: string;
+  phoneNumber?: string;
 }
 
 export interface RepairJob {

@@ -63,12 +63,21 @@ export function VariantSelectionModal({
     setTimeout(() => setToastError(null), 5000);
   };
 
-  // Auto-focus code input on mount
+  // Auto-focus code input on mount reliably
   useEffect(() => {
-    const timer = setTimeout(() => {
-      codeInputRef.current?.focus();
-    }, 150);
-    return () => clearTimeout(timer);
+    const focusInput = () => {
+      if (codeInputRef.current) {
+        codeInputRef.current.focus();
+        codeInputRef.current.select();
+      }
+    };
+    focusInput();
+    const t1 = setTimeout(focusInput, 50);
+    const t2 = setTimeout(focusInput, 200);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, []);
 
   // If initial serial number was passed, attempt verification
@@ -83,7 +92,7 @@ export function VariantSelectionModal({
     if (!img) return null;
     if (img.startsWith("http://") || img.startsWith("https://") || img.startsWith("data:")) return img;
     const cleanPath = img.startsWith("/") ? img : `/${img}`;
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://127.0.0.1:5000');
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://localhost:5000');
     return `${apiBase}${cleanPath}`;
   };
 
@@ -226,17 +235,6 @@ export function VariantSelectionModal({
             matchedVariant = product.variants.find((v) => String(v._id) === String(itemVariantId)) || null;
           }
 
-          // Strict variant validation: If a variant is selected, ensure the scanned IMEI belongs to this variant!
-          if (selectedVariant && matchedVariant && String(matchedVariant._id) !== String(selectedVariant._id)) {
-            const imeiVariantTitle = getVariantBadges(matchedVariant).join(" • ");
-            const selectedVariantTitle = getVariantBadges(selectedVariant).join(" • ");
-            showError(`This IMEI belongs to "${imeiVariantTitle}", not the selected variant "${selectedVariantTitle}". Please select "${imeiVariantTitle}" or scan a matching IMEI.`);
-            setVerifiedStockItem(null);
-            setVerifiedCode(null);
-            setIsVerifying(false);
-            return false;
-          }
-
           const targetVariant = matchedVariant || selectedVariant;
           if (!targetVariant) {
             showError("No matching variant found for this IMEI.");
@@ -244,6 +242,7 @@ export function VariantSelectionModal({
             return false;
           }
 
+          // Auto-select the variant belonging to this verified IMEI
           setSelectedVariant(targetVariant);
           setVerifiedStockItem(stockItem);
           const resolvedImei = stockItem.imei1 || stockItem.imei2 || trimmed;
@@ -363,19 +362,17 @@ export function VariantSelectionModal({
         if (!success) return;
       }
 
-      // Check variant matching on confirm
+      // Resolve final target variant
       const itemVariantId = verifiedStockItem?.variant?._id || verifiedStockItem?.variant;
-      if (itemVariantId && String(itemVariantId) !== String(selectedVariant._id)) {
-        showError("The verified IMEI does not match the currently selected variant.");
-        return;
-      }
+      const matchedVariant = (itemVariantId && product.variants?.find((v) => String(v._id) === String(itemVariantId))) || null;
+      const finalVariant = matchedVariant || selectedVariant;
 
       const finalStockItem = verifiedStockItem;
       const finalSerial = verifiedCode || codeInput.trim();
-      const finalPrice = getFinalPrice(selectedVariant, finalStockItem);
+      const finalPrice = getFinalPrice(finalVariant, finalStockItem);
 
       onSelectVariant(
-        selectedVariant,
+        finalVariant,
         finalSerial,
         finalStockItem?._id,
         finalPrice
@@ -520,7 +517,7 @@ export function VariantSelectionModal({
                           if (isVerifiedForCurrentInput) {
                             handleConfirm();
                           } else {
-                            verifyCode(codeInput, true);
+                            verifyCode(codeInput, false);
                           }
                         }
                       }}
@@ -549,7 +546,7 @@ export function VariantSelectionModal({
                       if (isVerifiedForCurrentInput) {
                         handleConfirm();
                       } else {
-                        verifyCode(codeInput, true);
+                        verifyCode(codeInput, false);
                       }
                     }}
                     disabled={isVerifying || !codeInput.trim()}

@@ -3,13 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { PERMISSIONS } from "../constants/permission";
 import logo from "../assets/logo.png";
-const API_URL = import.meta.env.VITE_API_URL || "https://api.hotlinecellular.lk/api/v1";
+const API_URL = import.meta.env.VITE_API_URL as string;
 
 export default function Login(): JSX.Element {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [branchId, setBranchId] = useState("");
-  const [branches, setBranches] = useState<{_id: string; name: string}[]>([]);
+  const [branches, setBranches] = useState<{ _id: string; name: string }[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(true);
   const [branchError, setBranchError] = useState("");
   const [error, setError] = useState("");
@@ -89,10 +89,10 @@ export default function Login(): JSX.Element {
         <div className="absolute inset-0 bg-gradient-to-r from-sky-400 to-blue-500 rounded-2xl blur opacity-20"></div>
         <div className="relative bg-white/95 dark:bg-slate-900/95 dark:bg-slate-800/95 backdrop-blur-xl border border-sky-200/50 dark:border-slate-700/50 rounded-2xl p-8 shadow-2xl shadow-sky-100/20 dark:shadow-none">
           {/* Logo */}
-            <div className="text-center mb-8">
-              <img src={logo} alt="Hotline Cellular" className="h-20 mx-auto mb-4 object-contain drop-shadow-sm" />
-              <p className="text-slate-600 mt-1 dark:text-slate-400">Sign in to your account</p>
-            </div>
+          <div className="text-center mb-8">
+            <img src={logo} alt="Hotline Cellular" className="h-20 mx-auto mb-4 object-contain drop-shadow-sm" />
+            <p className="text-slate-600 mt-1 dark:text-slate-400">Sign in to your account</p>
+          </div>
           {/* Error */}
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-center gap-2">

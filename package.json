@@ -1,7 +1,9 @@
 {
   "name": "hotline-ui",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.0",
+  "description": "Hotline Cellular POS System",
+  "author": "Hotline Cellular",
   "type": "module",
   "scripts": {
     "dev": "vite",

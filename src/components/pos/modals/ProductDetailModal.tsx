@@ -18,7 +18,7 @@ export function ProductDetailModal({
     if (!img) return null;
     if (img.startsWith("http://") || img.startsWith("https://") || img.startsWith("data:")) return img;
     const cleanPath = img.startsWith("/") ? img : `/${img}`;
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://127.0.0.1:5000');
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://localhost:5000');
     return `${apiBase}${cleanPath}`;
   };
 

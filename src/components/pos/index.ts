@@ -8,6 +8,7 @@ export { WarrantyClaimModal } from './modals/WarrantyClaimModal';
 export { BranchSelectorModal } from './modals/BranchSelectorModal';
 export { VariantSelectionModal } from './modals/VariantSelectionModal';
 export { PermissionOverrideModal } from './modals/PermissionOverrideModal';
+export { CustomerRequestModal } from './modals/CustomerRequestModal';
 
 // Panels
 export { SalesPanel } from './panels/SalesPanel';
@@ -19,3 +20,4 @@ export { WarrantyPanel } from './panels/WarrantyPanel';
 export * from '../../types/pos';
 
 export { ExpensesPanel } from './panels/ExpensesPanel';
+export { SimReloadPanel } from './panels/SimReloadPanel';

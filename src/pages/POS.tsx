@@ -5,6 +5,7 @@ import { PERMISSIONS } from "../constants/permission";
 import { api } from "../lib/api";
 import { getKeyboardShortcuts, getShopSettings } from "../lib/settings";
 import logo from "../assets/logo.png";
+import { generateDailySalesReportHtml, printDocument } from "../lib/invoiceGenerator";
 
 // Import types from centralized types file
 import {
@@ -25,11 +26,13 @@ import {
   ProductDetailModal,
   WarrantyClaimModal,
   VariantSelectionModal,
+  CustomerRequestModal,
   SalesPanel,
   RepairsPanel,
   ExpensesPanel,
   ReturnsPanel,
   WarrantyPanel,
+  SimReloadPanel,
 } from "../components/pos";
 
 /* =======================
@@ -97,6 +100,7 @@ export default function POS(): JSX.Element {
   // Repairs Panel State
   const [showRepairsPanel, setShowRepairsPanel] = useState<boolean>(false);
   const [showExpensesPanel, setShowExpensesPanel] = useState<boolean>(false);
+  const [showSimReloadPanel, setShowSimReloadPanel] = useState<boolean>(false);
   const [repairs, setRepairs] = useState<RepairJob[]>([]);
   const [repairsLoading, setRepairsLoading] = useState<boolean>(false);
   const [selectedRepairForPayment, setSelectedRepairForPayment] =
@@ -118,6 +122,7 @@ export default function POS(): JSX.Element {
   // Serial Number Modal State (for warranty products)
   const [showSerialModal, setShowSerialModal] = useState<boolean>(false);
   const [showVariantModal, setShowVariantModal] = useState<boolean>(false);
+  const [showCustomerRequestModal, setShowCustomerRequestModal] = useState<boolean>(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const [pendingVariantId, setPendingVariantId] = useState<string | undefined>(undefined);
   const [pendingSerialNumber, setPendingSerialNumber] = useState<string | undefined>(undefined);
@@ -139,10 +144,62 @@ export default function POS(): JSX.Element {
     }, 3000);
   };
 
+  // Helper to format variant display
+  const formatVariantDisplay = (v: any) => {
+    if (!v) return undefined;
+    if (Array.isArray(v.attributes) && v.attributes.length > 0) {
+      return v.attributes
+        .map((a: any) => (typeof a === "object" ? (a.value || a.name || "") : String(a)))
+        .filter(Boolean)
+        .join(" - ");
+    }
+    return v.itemCode || v.sku || undefined;
+  };
+
+  // Helper to determine if a product or variant is an IMEI-tracked device
+  const isImeiProduct = (prod: any, variant?: any): boolean => {
+    if (!prod) return false;
+    const rawProdTracking = String(prod.trackingType || "").toUpperCase();
+    if (rawProdTracking === "IMEI") return true;
+    if (variant && String(variant.trackingType || "").toUpperCase() === "IMEI") return true;
+    if (Array.isArray(prod.variants) && prod.variants.some((v: any) => String(v.trackingType || "").toUpperCase() === "IMEI")) {
+      return true;
+    }
+    const catName = typeof prod.category === "object" ? prod.category?.name || "" : "";
+    if (/phone|mobile|cellular|smartphone|tablet/i.test(catName)) return true;
+    if (/iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei/i.test(prod.name || "")) return true;
+    return false;
+  };
+
+  const productsRef = useRef<Product[]>(products);
+  const cartRef = useRef<CartItem[]>(cart);
+  const lastProcessedScanRef = useRef<{ code: string; time: number }>({ code: "", time: 0 });
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+
   // Process scanned barcode, SKU, or IMEI/Serial
   const processScannedBarcode = async (rawCode: string) => {
     const code = rawCode.trim();
     if (!code) return;
+
+    // Deduplicate rapid duplicate scans (within 800ms)
+    const now = Date.now();
+    if (
+      lastProcessedScanRef.current.code.toLowerCase() === code.toLowerCase() &&
+      now - lastProcessedScanRef.current.time < 800
+    ) {
+      return;
+    }
+    lastProcessedScanRef.current = { code, time: now };
+
+    const currentProducts = productsRef.current && productsRef.current.length > 0 ? productsRef.current : products;
+    const currentCart = cartRef.current || cart;
 
     // 1. Direct IMEI Lookup -> Auto-add to cart without pop-up
     try {
@@ -154,7 +211,7 @@ export default function POS(): JSX.Element {
         const stockItem = imeiRes.data.stockItem;
 
         // Verify if this IMEI is already in cart
-        const alreadyInCart = cart.some(
+        const alreadyInCart = currentCart.some(
           (item) =>
             (item.serialNumber && String(item.serialNumber).toLowerCase() === code.toLowerCase()) ||
             (item.stockItemId && String(item.stockItemId) === String(stockItem._id))
@@ -166,7 +223,7 @@ export default function POS(): JSX.Element {
         }
 
         const itemProductId = stockItem.product?._id || stockItem.product || stockItem.stock?.product;
-        let baseProduct = products.find((p) => String(p._id) === String(itemProductId));
+        let baseProduct = currentProducts.find((p) => String(p._id) === String(itemProductId));
 
         if (!baseProduct && stockItem.product) {
           baseProduct = {
@@ -191,6 +248,7 @@ export default function POS(): JSX.Element {
             stockItem.sellingPrice || stockItem.variant?.sellingPrice,
             true // skipSerial modal
           );
+          showSuccess(`Added "${baseProduct.name}" (IMEI: ${code})`);
           return;
         }
       }
@@ -204,18 +262,14 @@ export default function POS(): JSX.Element {
         `/inventory/lookup/serial/${encodeURIComponent(code)}`
       ).catch(() => null);
 
-      if (serialRes && serialRes.status === "success" && serialRes.data?.stockItem) {
+      if (serialRes && serialRes.status === "success" && serialRes.data) {
         const data = serialRes.data;
         const stockItem = data.stockItem;
-        const isSerial = data.isSerialNumber !== false && (
-          data.isSerialNumber === true ||
-          code.toUpperCase().startsWith("STK-") ||
-          Boolean(stockItem.serialNumber && String(stockItem.serialNumber).toLowerCase() === code.toLowerCase())
-        );
 
-        if (isSerial) {
+        // Case 2A: StockItem / SerialNumber matched
+        if (data.isSerialNumber === true && stockItem) {
           const itemProductId = stockItem.product?._id || stockItem.product || stockItem.stock?.product;
-          let targetProduct = products.find((p) => String(p._id) === String(itemProductId));
+          let targetProduct = currentProducts.find((p) => String(p._id) === String(itemProductId));
 
           if (!targetProduct && stockItem.product) {
             targetProduct = {
@@ -232,30 +286,64 @@ export default function POS(): JSX.Element {
           }
 
           if (targetProduct) {
-            // Get all variants that belong to this serial number
             const serialVariants: any[] = Array.isArray(data.variants) && data.variants.length > 0
               ? data.variants
               : (stockItem.variant ? [stockItem.variant] : []);
 
-            if (serialVariants.length > 0) {
-              // Scanned a serial number: pop up comes showing all the variants that are in that serial number
+            if (serialVariants.length > 1) {
+              // Scanned a batch serial number with multiple variants: pop up comes showing all variants
               setPendingProduct({ ...targetProduct, variants: serialVariants });
               setPendingVariantId(serialVariants[0]?._id);
               setPendingSerialNumber(code);
               setShowVariantModal(true);
               return;
             } else {
-              // Non-variant product scanned with serial number: auto-add to cart!
+              // Single variant or non-variant product: auto-add to cart!
               addToCart(
                 targetProduct,
                 code,
-                undefined,
+                serialVariants[0] || stockItem.variant,
                 stockItem._id,
                 stockItem.sellingPrice,
                 true
               );
+              showSuccess(`Added "${targetProduct.name}" (${code})`);
               return;
             }
+          }
+        }
+
+        // Case 2B: Product matched by barcode/sku/itemCode in serial lookup
+        if (data.isSerialNumber === false && data.product) {
+          const p = data.product;
+          const variants = data.variants || p.variants || [];
+          const fullProd = { ...p, variants };
+
+          if (isImeiProduct(fullProd)) {
+            setPendingProduct(fullProd);
+            setPendingVariantId(variants[0]?._id);
+            setPendingSerialNumber(undefined);
+            setShowVariantModal(true);
+            return;
+          }
+
+          if (variants.length > 1) {
+            setPendingProduct(fullProd);
+            setPendingVariantId(undefined);
+            setPendingSerialNumber(undefined);
+            setShowVariantModal(true);
+            return;
+          } else {
+            addToCart(
+              fullProd,
+              undefined,
+              variants[0] || undefined,
+              stockItem?._id,
+              stockItem?.sellingPrice || variants[0]?.sellingPrice || fullProd.sellingPrice,
+              true
+            );
+            showSuccess(`Added "${fullProd.name}"`);
+            return;
           }
         }
       }
@@ -268,13 +356,14 @@ export default function POS(): JSX.Element {
     let targetVariant: any = null;
 
     // A. Check if the scanned code matches a specific variant's itemCode, barcode, or sku in loaded products
-    for (const p of products) {
+    for (const p of currentProducts) {
       if (p.variants && Array.isArray(p.variants)) {
         const matchingVariant = p.variants.find(
           (v: any) =>
             (v.itemCode && String(v.itemCode).trim().toLowerCase() === code.toLowerCase()) ||
             (v.barcode && String(v.barcode).trim().toLowerCase() === code.toLowerCase()) ||
-            (v.sku && String(v.sku).trim().toLowerCase() === code.toLowerCase())
+            (v.sku && String(v.sku).trim().toLowerCase() === code.toLowerCase()) ||
+            (v._id && String(v._id).toLowerCase() === code.toLowerCase())
         );
         if (matchingVariant) {
           targetProduct = p;
@@ -286,7 +375,7 @@ export default function POS(): JSX.Element {
 
     // B. Check if code matches a product's barcode, sku, or itemCode in loaded products
     if (!targetProduct) {
-      targetProduct = products.find(
+      targetProduct = currentProducts.find(
         (p: any) =>
           (p.barcode && String(p.barcode).trim().toLowerCase() === code.toLowerCase()) ||
           (p.sku && String(p.sku).trim().toLowerCase() === code.toLowerCase()) ||
@@ -297,12 +386,15 @@ export default function POS(): JSX.Element {
     // C. Query backend by barcode endpoint if still not found
     if (!targetProduct) {
       try {
-        const barcodeRes = await api<{ status?: string; data?: { product?: any } }>(
+        const barcodeRes = await api<{ status?: string; data?: { product?: any; variant?: any } }>(
           `/products/barcode/${encodeURIComponent(code)}`
         ).catch(() => null);
 
         if (barcodeRes && barcodeRes.status === "success" && barcodeRes.data?.product) {
           targetProduct = barcodeRes.data.product;
+          if (barcodeRes.data.variant) {
+            targetVariant = barcodeRes.data.variant;
+          }
         }
       } catch (err) {
         console.error("Error fetching product by barcode:", err);
@@ -326,6 +418,30 @@ export default function POS(): JSX.Element {
 
     // If product found:
     if (targetProduct) {
+      const prodVariants = Array.isArray(targetProduct.variants) ? targetProduct.variants : [];
+
+      // If this product is an IMEI product: ALWAYS popup VariantSelectionModal to scan/select IMEI
+      if (isImeiProduct(targetProduct, targetVariant)) {
+        try {
+          const res = await api<any>(`/products/${targetProduct._id}/with-variants`).catch(() => null);
+          const fullProduct = (res && res.status === "success" && res.data?.product) ? res.data.product : targetProduct;
+          const variants = (res && res.status === "success" && res.data?.variants) ? res.data.variants : prodVariants;
+
+          setPendingProduct({ ...fullProduct, variants });
+          setPendingVariantId(targetVariant?._id || undefined);
+          setPendingSerialNumber(undefined);
+          setShowVariantModal(true);
+          return;
+        } catch (err) {
+          setPendingProduct({ ...targetProduct, variants: prodVariants });
+          setPendingVariantId(targetVariant?._id || undefined);
+          setPendingSerialNumber(undefined);
+          setShowVariantModal(true);
+          return;
+        }
+      }
+
+      // QUANTITY PRODUCT:
       // 1. If scanned a specific variant barcode/SKU -> AUTO-ADD DIRECTLY TO CART!
       if (targetVariant) {
         addToCart(
@@ -336,14 +452,14 @@ export default function POS(): JSX.Element {
           targetVariant.sellingPrice || targetVariant.effectivePrice,
           true
         );
+        showSuccess(`Added "${targetProduct.name}" (${formatVariantDisplay(targetVariant) || ''})`);
         return;
       }
-
-      const prodVariants = Array.isArray(targetProduct.variants) ? targetProduct.variants : [];
 
       // 2. If product has NO variants -> AUTO-ADD DIRECTLY TO CART!
       if (prodVariants.length === 0) {
         addToCart(targetProduct, undefined, undefined, undefined, undefined, true);
+        showSuccess(`Added "${targetProduct.name}"`);
         return;
       }
 
@@ -357,11 +473,11 @@ export default function POS(): JSX.Element {
           prodVariants[0].sellingPrice || prodVariants[0].effectivePrice,
           true
         );
+        showSuccess(`Added "${targetProduct.name}"`);
         return;
       }
 
-      // 4. If product has multiple variants and generic parent barcode was scanned:
-      // Show VariantSelectionModal so cashier can choose which variant they have
+      // 4. Multiple variants and generic product barcode scanned:
       try {
         const res = await api<any>(`/products/${targetProduct._id}/with-variants`);
         if (res.status === "success" && res.data) {
@@ -378,7 +494,7 @@ export default function POS(): JSX.Element {
         console.error("Error fetching product variants:", err);
       }
 
-      setPendingProduct(targetProduct);
+      setPendingProduct({ ...targetProduct, variants: prodVariants });
       setPendingVariantId(undefined);
       setPendingSerialNumber(undefined);
       setShowVariantModal(true);
@@ -419,55 +535,6 @@ export default function POS(): JSX.Element {
     };
   }, []);
 
-  // Global Barcode Scanner Listener
-  useEffect(() => {
-    let barcodeBuffer = "";
-    let lastKeyTime = Date.now();
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is pressing modifiers
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      
-      const currentTime = Date.now();
-      
-      // If time between keystrokes is more than 50ms, it's a human typing, reset buffer
-      if (currentTime - lastKeyTime > 50) {
-        barcodeBuffer = "";
-      }
-      
-      // Only capture single characters for the buffer
-      if (e.key.length === 1) {
-        barcodeBuffer += e.key;
-      }
-      
-      // If Enter is pressed and we have a rapidly typed buffer (at least 3 chars)
-      if (e.key === "Enter" && barcodeBuffer.length >= 3) {
-        e.preventDefault(); 
-        
-        // If they were focused on an input, blur it to prevent stray keystrokes later
-        if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA")) {
-          (document.activeElement as HTMLElement).blur();
-        }
-        
-        const scannedCode = barcodeBuffer;
-        barcodeBuffer = "";
-        
-        // Set it in the search input visually
-        setSearchQuery(scannedCode);
-        
-        // Process the scan
-        processScannedBarcode(scannedCode);
-      }
-      
-      lastKeyTime = currentTime;
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [products, cart]);
-
   const notifiedRepairsRef = useRef<Set<string>>(new Set());
   const isInitialRepairsFetchRef = useRef<boolean>(true);
 
@@ -493,14 +560,56 @@ export default function POS(): JSX.Element {
   const barcodeBufferRef = useRef<string>("");
   const lastKeyTimeRef = useRef<number>(0);
 
+  // Reset scanner state when all modals/panels close and user returns to home dashboard
+  useEffect(() => {
+    const isAnyModalOpen =
+      showPaymentModal ||
+      showSalesPanel ||
+      showRepairsPanel ||
+      showExpensesPanel ||
+      showReturnsPanel ||
+      showWarrantyPanel ||
+      showSerialModal ||
+      showVariantModal ||
+      showCustomerRequestModal ||
+      showSimReloadPanel ||
+      selectedRepairForPayment !== null ||
+      selectedWarrantyForClaim !== null ||
+      selectedProductForDetails !== null;
+
+    if (!isAnyModalOpen) {
+      barcodeBufferRef.current = "";
+      lastKeyTimeRef.current = 0;
+      // If any non-search input was focused, blur it so scanner isn't intercepted
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && activeEl !== searchInputRef.current && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+        activeEl.blur();
+      }
+    }
+  }, [
+    showPaymentModal,
+    showSalesPanel,
+    showRepairsPanel,
+    showExpensesPanel,
+    showReturnsPanel,
+    showWarrantyPanel,
+    showSerialModal,
+    showVariantModal,
+    showCustomerRequestModal,
+    showSimReloadPanel,
+    selectedRepairForPayment,
+    selectedWarrantyForClaim,
+    selectedProductForDetails,
+  ]);
+
   useEffect(() => {
     const handleGlobalScan = (e: KeyboardEvent) => {
       const settings = getShopSettings();
-      if (!settings.barcodeEnabled) return;
+      // Allow scanning unless explicitly toggled off (boolean false)
+      if (settings.barcodeEnabled === false) return;
 
-      // Ignore if typing in an input other than general focus
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      // Ignore modifier keys
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
 
       // Ignore if any modal/panel is open
       if (
@@ -511,27 +620,51 @@ export default function POS(): JSX.Element {
         showReturnsPanel ||
         showWarrantyPanel ||
         showSerialModal ||
-        showVariantModal
-      ) return;
+        showVariantModal ||
+        showCustomerRequestModal ||
+        showSimReloadPanel ||
+        selectedRepairForPayment !== null ||
+        selectedWarrantyForClaim !== null ||
+        selectedProductForDetails !== null
+      ) {
+        barcodeBufferRef.current = "";
+        return;
+      }
+
+      // Check target element: support search input or global dashboard screen
+      const target = e.target as HTMLElement | null;
+      const isInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+      const isSearchInput = target === searchInputRef.current;
+
+      if (isInput && !isSearchInput) {
+        barcodeBufferRef.current = "";
+        return;
+      }
 
       const now = Date.now();
       const timeDiff = now - lastKeyTimeRef.current;
       lastKeyTimeRef.current = now;
 
-      // Hardware scanners type very fast (< 120ms per character)
-      if (timeDiff > 120) {
-        barcodeBufferRef.current = ""; // Reset if typing too slow
+      // Barcode scanners type rapidly (allow up to 350ms for wireless/USB scanner latency)
+      if (timeDiff > 350) {
+        barcodeBufferRef.current = ""; // Reset if interval between keystrokes indicates slow manual typing
       }
 
       if (e.key === "Enter") {
-        if (barcodeBufferRef.current.length >= 3) {
+        const scannedCode = (barcodeBufferRef.current || (isSearchInput ? searchQuery : "")).trim();
+        barcodeBufferRef.current = "";
+
+        if (scannedCode.length >= 2) {
           e.preventDefault();
-          const scannedCode = barcodeBufferRef.current.trim();
-          barcodeBufferRef.current = "";
+          if (isSearchInput) {
+            setSearchQuery("");
+            if (searchInputRef.current) {
+              searchInputRef.current.blur();
+            }
+          }
           processScannedBarcode(scannedCode);
         }
-        barcodeBufferRef.current = "";
-      } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      } else if (e.key.length === 1) {
         barcodeBufferRef.current += e.key;
       }
     };
@@ -539,8 +672,6 @@ export default function POS(): JSX.Element {
     window.addEventListener("keydown", handleGlobalScan);
     return () => window.removeEventListener("keydown", handleGlobalScan);
   }, [
-    products,
-    cart,
     showPaymentModal,
     showSalesPanel,
     showRepairsPanel,
@@ -548,7 +679,13 @@ export default function POS(): JSX.Element {
     showReturnsPanel,
     showWarrantyPanel,
     showSerialModal,
-    showVariantModal
+    showVariantModal,
+    showCustomerRequestModal,
+    showSimReloadPanel,
+    selectedRepairForPayment,
+    selectedWarrantyForClaim,
+    selectedProductForDetails,
+    searchQuery,
   ]);
 
   // Keyboard shortcuts handler
@@ -598,7 +735,7 @@ export default function POS(): JSX.Element {
     try {
       const [catData, prodData] = await Promise.all([
         api<CategoriesResponse>("/categories?tree=true"),
-        api<ProductsResponse>("/products?limit=1000"),
+        api<ProductsResponse>("/products?limit=10000"),
       ]);
       if (catData.status === "success" && catData.data?.categories) {
         setCategoryTree(catData.data.categories);
@@ -638,6 +775,64 @@ export default function POS(): JSX.Element {
       console.error("Failed to fetch sales:", err);
     } finally {
       setSalesLoading(false);
+    }
+  };
+
+  const [printingTodaySales, setPrintingTodaySales] = useState<boolean>(false);
+
+  // Print all sales of the current day (from 12:00 AM to current moment)
+  const handlePrintTodaySales = async () => {
+    if (printingTodaySales) return;
+    setPrintingTodaySales(true);
+    try {
+      const now = new Date();
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0); // 12:00:00.000 AM of current day
+
+      const queryStr = `/sales?startDate=${encodeURIComponent(startOfDay.toISOString())}&endDate=${encodeURIComponent(now.toISOString())}&limit=2000`;
+      const res = await api<any>(queryStr);
+
+      const salesList: any[] = res?.status === "success" && Array.isArray(res?.data?.sales)
+        ? res.data.sales
+        : [];
+
+      // Filter out cancelled / voided sales and ensure chronological order (from morning to current time)
+      const validSales = salesList
+        .filter((s) => s.status !== "CANCELLED" && s.status !== "VOIDED")
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      // Include queued offline sales created today if any exist
+      try {
+        const offlineQueue = JSON.parse(localStorage.getItem("offlineSalesQueue") || "[]");
+        if (Array.isArray(offlineQueue) && offlineQueue.length > 0) {
+          offlineQueue.forEach((offSale: any) => {
+            const saleTime = new Date(offSale.createdAt || Date.now());
+            if (saleTime >= startOfDay && saleTime <= now && offSale.status !== "CANCELLED") {
+              const exists = validSales.some((s) => s.saleNumber === offSale.saleNumber || (s._id && s._id === offSale._id));
+              if (!exists) {
+                validSales.push(offSale);
+              }
+            }
+          });
+        }
+      } catch (e) {}
+
+      const formattedTime = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
+
+      if (validSales.length === 0) {
+        showError(`No sales recorded today between 12:00 AM and ${formattedTime}.`);
+        return;
+      }
+
+      showSuccess(`Preparing report for ${validSales.length} sale(s) today...`);
+      const shopSettings = getShopSettings();
+      const html = generateDailySalesReportHtml(validSales, startOfDay, now, shopSettings, user);
+      printDocument(html, `Daily-Sales-${startOfDay.toISOString().slice(0, 10)}`, "bill");
+    } catch (err: any) {
+      console.error("Failed to fetch today's sales for printing:", err);
+      showError(err?.message || "Failed to load today's sales for printing.");
+    } finally {
+      setPrintingTodaySales(false);
     }
   };
 
@@ -890,7 +1085,7 @@ export default function POS(): JSX.Element {
     if (!img) return null;
     if (img.startsWith("http://") || img.startsWith("https://") || img.startsWith("data:")) return img;
     const cleanPath = img.startsWith("/") ? img : `/${img}`;
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://127.0.0.1:5000');
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://localhost:5000');
     return `${apiBase}${cleanPath}`;
   };
 
@@ -941,15 +1136,61 @@ export default function POS(): JSX.Element {
     try {
       const res = await api<any>(`/products/${product._id}/with-variants`);
       if (res.status === "success" && res.data) {
-        const fullProduct = res.data.product || product;
         const fetchedVariants = Array.isArray(res.data.variants) ? res.data.variants : [];
         const variants = fetchedVariants.length > 0 ? fetchedVariants : existingVariants;
 
-        if (variants.length > 0) {
+        const resolvedStock =
+          res.data.product?.stock !== undefined && res.data.product?.stock !== null
+            ? Number(res.data.product.stock)
+            : (product.stock !== undefined && product.stock !== null ? Number(product.stock) : 0);
+
+        const catalogPrice = Number(product.effectivePrice ?? product.sellingPrice ?? 0);
+        const resolvedSellingPrice =
+          Number(res.data.product?.sellingPrice) > 0
+            ? Number(res.data.product.sellingPrice)
+            : catalogPrice;
+        const resolvedOriginalPrice =
+          Number(res.data.product?.originalPrice) > 0
+            ? Number(res.data.product.originalPrice)
+            : (Number(product.originalPrice) > 0 ? Number(product.originalPrice) : resolvedSellingPrice);
+        const resolvedEffectivePrice =
+          Number(res.data.product?.effectivePrice) > 0
+            ? Number(res.data.product.effectivePrice)
+            : resolvedSellingPrice;
+
+        const fullProduct = {
+          ...product,
+          ...(res.data.product || {}),
+          stock: resolvedStock,
+          sellingPrice: resolvedSellingPrice,
+          originalPrice: resolvedOriginalPrice,
+          effectivePrice: resolvedEffectivePrice,
+        };
+
+        // If product only has a single dummy variant (e.g. value === "None" or "Default"), auto-select it
+        const isSingleDummyVariant =
+          variants.length === 1 &&
+          (!variants[0].attributes ||
+            variants[0].attributes.length === 0 ||
+            variants[0].attributes.some((a: any) =>
+              typeof a === "object"
+                ? !a.value || a.value === "None" || a.value === "Default"
+                : a === "None" || a === "Default"
+            ));
+
+        if (variants.length > 1 || (variants.length === 1 && !isSingleDummyVariant)) {
           setPendingProduct({ ...fullProduct, variants });
           setPendingVariantId(undefined);
           setPendingSerialNumber(undefined);
           setShowVariantModal(true);
+          return;
+        } else if (variants.length === 1 && isSingleDummyVariant) {
+          const singleVar = {
+            ...variants[0],
+            stock: variants[0].stock ?? variants[0].stockQty ?? resolvedStock,
+            stockQty: variants[0].stockQty ?? variants[0].stock ?? resolvedStock,
+          };
+          addToCart(fullProduct, undefined, singleVar);
           return;
         } else {
           addToCart(fullProduct);
@@ -973,15 +1214,22 @@ export default function POS(): JSX.Element {
 
   // Cart functions
   const addToCart = (product: Product, serialNumber?: string, variant?: any, stockItemId?: string, stockItemPrice?: number, skipSerial: boolean = false): void => {
-    if (!variant && (product?.stock ?? 0) === 0) {
-      showError("Product is out of stock!");
-      return;
-    }
-
-    // If product has variants and no specific variant was passed, open VariantSelectionModal
+    // If product has variants and no specific variant was passed, open VariantSelectionModal first
     const hasVariants = Boolean(product.variants && product.variants.length > 0);
     if (hasVariants && !variant) {
       handleProductClick(product);
+      return;
+    }
+
+    // Check stock: for variants check variant stock (with fallback to product stock), otherwise check product stock
+    const effectiveStock = stockItemId
+      ? Math.max(1, (variant?.stock ?? variant?.stockQty ?? product?.stock ?? 1))
+      : (variant
+        ? (variant.stock ?? variant.stockQty ?? product?.stock ?? 0)
+        : (product?.stock ?? 0));
+
+    if (effectiveStock <= 0) {
+      showError(variant ? "Selected variant is out of stock!" : "Product is out of stock!");
       return;
     }
 
@@ -1242,23 +1490,41 @@ export default function POS(): JSX.Element {
     setExchangePayload(null);
   };
 
-  // Calculate totals (use effectivePrice for items with offers)
-  const getLineTotal = (item: CartItem) => {
-    const unitPrice = item.effectivePrice !== undefined && item.effectivePrice !== null
-      ? item.effectivePrice
-      : (item.sellingPrice ?? 0);
-    return unitPrice * item.quantity;
+  // Calculate totals (use originalPrice and discountAmount)
+  const getItemUnitPrice = (item: CartItem): number => {
+    const orig = Number(item.originalPrice ?? item.sellingPrice ?? 0);
+    const disc = Number(item.discountAmount ?? 0);
+    if (disc > 0) {
+      return Math.max(0, orig - disc);
+    }
+    return item.effectivePrice !== undefined && item.effectivePrice !== null && Number(item.effectivePrice) > 0
+      ? Number(item.effectivePrice)
+      : orig;
   };
 
-  const subtotal = cart.reduce(
-    (sum, item) => sum + getLineTotal(item),
+  const getLineTotal = (item: CartItem): number => {
+    return getItemUnitPrice(item) * item.quantity;
+  };
+
+  const rawSubtotal = cart.reduce(
+    (sum, item) => sum + (Number(item.originalPrice ?? item.sellingPrice ?? 0) * item.quantity),
     0,
   );
+
+  const totalDiscount = cart.reduce(
+    (sum, item) => sum + (Number(item.discountAmount ?? 0) * item.quantity),
+    0,
+  );
+
+  const netSubtotal = Math.max(0, rawSubtotal - totalDiscount);
+
   const tax = cart.reduce((sum, item) => {
-    const itemTotal = getLineTotal(item);
-    return sum + itemTotal * ((item.taxRate ?? 0) / 100);
+    const lineTotal = getLineTotal(item);
+    return sum + lineTotal * ((item.taxRate ?? 0) / 100);
   }, 0);
-  const total = subtotal + tax;
+
+  const subtotal = rawSubtotal;
+  const total = netSubtotal + tax;
 
   const handleLogout = (): void => {
     logout();
@@ -1380,6 +1646,9 @@ export default function POS(): JSX.Element {
                 e.preventDefault();
                 const code = searchQuery.trim();
                 setSearchQuery("");
+                if (searchInputRef.current) {
+                  searchInputRef.current.blur();
+                }
                 processScannedBarcode(code);
               }
             }}
@@ -1410,6 +1679,35 @@ export default function POS(): JSX.Element {
 
         {/* Action Buttons & User Info */}
         <div className="flex items-center gap-2">
+          {/* Print Today's Sales (12:00 AM to Now) — Left from Refresh Button */}
+          <button
+            onClick={handlePrintTodaySales}
+            disabled={printingTodaySales}
+            className="flex items-center justify-center w-9 h-9 bg-white/60 dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-700 border border-emerald-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-emerald-700 dark:hover:text-emerald-400 transition-all shadow-sm group cursor-pointer"
+            title="Print Today's Sales (12:00 AM - Now)"
+          >
+            {printingTodaySales ? (
+              <svg className="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4 group-hover:scale-110 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-all text-slate-600 dark:text-slate-300"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+                />
+              </svg>
+            )}
+          </button>
+
           <button
             onClick={() => fetchData()}
             className="flex items-center justify-center w-9 h-9 bg-white/60 dark:bg-slate-800/80 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-sky-700 dark:hover:text-white transition-all shadow-sm group"
@@ -1424,6 +1722,53 @@ export default function POS(): JSX.Element {
             >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
+          </button>
+
+          {/* Customer Product Request Button (right next to refresh button) */}
+          <button
+            onClick={() => setShowCustomerRequestModal(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20 dark:bg-slate-800/80 dark:hover:bg-slate-700 border border-amber-300/80 dark:border-amber-600/50 rounded-xl text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-all group shadow-sm cursor-pointer"
+            title="Customer Product Request (Out of stock notes)"
+          >
+            <svg
+              className="w-4 h-4 group-hover:scale-110 transition-transform text-amber-600 dark:text-amber-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+              />
+            </svg>
+            <span className="text-xs font-semibold hidden xl:block">
+              Request Item
+            </span>
+          </button>
+
+          <button
+            onClick={() => setShowSimReloadPanel(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-indigo-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-white transition-all group shadow-sm cursor-pointer"
+            title="SIM Cards & Mobile Reload"
+          >
+            <svg
+              className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM12 11h.01M9 11h.01M15 11h.01M12 14h.01M9 14h.01M15 14h.01"
+              />
+            </svg>
+            <span className="text-xs font-semibold hidden xl:block">
+              SIM & Reload
+            </span>
           </button>
           
           <button
@@ -2094,7 +2439,6 @@ export default function POS(): JSX.Element {
               </div>
             ) : (
               cart.map((item, index) => {
-                const itemPrice = item.effectivePrice ?? item.sellingPrice ?? 0;
                 const hasItemOffer =
                   item.hasActiveOffer ||
                   (item.offer?.isActive && (item.discountAmount ?? 0) > 0);
@@ -2142,8 +2486,14 @@ export default function POS(): JSX.Element {
                         </div>
 
                         {/* Variant & Serial Badges Row */}
-                        {(item.variantDisplay || item.serialNumber || hasItemOffer) && (
+                        {(item.variantDisplay || item.serialNumber || hasItemOffer || item.isSimReload) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            {item.isSimReload && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-200/80 dark:border-purple-800/60">
+                                <span>{item.simReloadType === "RELOAD" ? "⚡ Reload" : "📶 SIM"}</span>
+                                {item.provider && <span>({item.provider})</span>}
+                              </span>
+                            )}
                             {item.variantDisplay && (
                               <span className="inline-flex items-center text-[11px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/60 px-2 py-0.5 rounded-md border border-sky-200/80 dark:border-sky-800/60">
                                 {item.variantDisplay}
@@ -2171,7 +2521,7 @@ export default function POS(): JSX.Element {
                           <div className="flex items-center gap-1 text-xs">
                             <span className="text-slate-400 dark:text-slate-500 text-[11px]">Price:</span>
                             <span className="text-sky-600 dark:text-sky-400 font-semibold whitespace-nowrap">
-                              Rs. {itemPrice.toLocaleString()}
+                              Rs. {Number(item.originalPrice ?? item.sellingPrice ?? 0).toLocaleString()}
                             </span>
                           </div>
 
@@ -2187,13 +2537,17 @@ export default function POS(): JSX.Element {
                                 placeholder="0"
                                 onChange={(e) => {
                                   const newCart = [...cart];
-                                  const val = parseFloat(e.target.value);
+                                  const rawVal = e.target.value;
+                                  const val = parseFloat(rawVal);
+                                  const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
                                   if (!isNaN(val) && val >= 0) {
                                     newCart[index].discountAmount = val;
+                                    newCart[index].effectivePrice = Math.max(0, base - val);
                                     setCart(newCart);
-                                  } else if (e.target.value === "") {
+                                  } else if (rawVal === "") {
                                     // @ts-expect-error - Expected number but resetting with empty string
                                     newCart[index].discountAmount = "";
+                                    newCart[index].effectivePrice = base;
                                     setCart(newCart);
                                   }
                                 }}
@@ -2201,6 +2555,8 @@ export default function POS(): JSX.Element {
                                   const newCart = [...cart];
                                   if (item.discountAmount === undefined || String(item.discountAmount) === "") {
                                     newCart[index].discountAmount = 0;
+                                    const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
+                                    newCart[index].effectivePrice = base;
                                     setCart(newCart);
                                   }
                                 }}
@@ -2290,7 +2646,7 @@ export default function POS(): JSX.Element {
                             {Number(item.discountAmount) > 0 && (
                               <div className="flex items-center gap-1 mt-0.5">
                                 <span className="line-through text-[10px] text-slate-400 font-medium">
-                                  Rs. {((Number(item.originalPrice || item.sellingPrice) || 0) * item.quantity).toLocaleString()}
+                                  Rs. {((Number(item.originalPrice ?? item.sellingPrice) || 0) * item.quantity).toLocaleString()}
                                 </span>
                                 <span className="text-[10px] text-rose-500 font-semibold whitespace-nowrap">
                                   - Rs. {(Number(item.discountAmount) * item.quantity).toLocaleString()}
@@ -2314,9 +2670,15 @@ export default function POS(): JSX.Element {
               <div className="flex justify-between items-center text-sm">
                 <span className="text-slate-600 dark:text-slate-400">Subtotal</span>
                 <span className="text-slate-700 font-medium dark:text-slate-300">
-                  Rs. {subtotal.toLocaleString()}
+                  Rs. {rawSubtotal.toLocaleString()}
                 </span>
               </div>
+              {totalDiscount > 0 && (
+                <div className="flex justify-between items-center text-sm text-rose-500 font-medium">
+                  <span>Discount</span>
+                  <span>- Rs. {totalDiscount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center text-sm">
                 <span className="text-slate-600 dark:text-slate-400">Tax</span>
                 <span className="text-slate-700 font-medium dark:text-slate-300">
@@ -2416,6 +2778,15 @@ export default function POS(): JSX.Element {
 
       {showExpensesPanel && (
         <ExpensesPanel onClose={() => setShowExpensesPanel(false)} />
+      )}
+
+      {showSimReloadPanel && (
+        <SimReloadPanel
+          onClose={() => setShowSimReloadPanel(false)}
+          onAddToCart={(item) => {
+            setCart((prev) => [...prev, item]);
+          }}
+        />
       )}
 
       {/* Repair Payment Modal */}
@@ -2710,6 +3081,13 @@ export default function POS(): JSX.Element {
             ]);
             setShowReturnsPanel(false);
           }}
+        />
+      )}
+
+      {/* Customer Product Request Modal */}
+      {showCustomerRequestModal && (
+        <CustomerRequestModal
+          onClose={() => setShowCustomerRequestModal(false)}
         />
       )}
     </div>

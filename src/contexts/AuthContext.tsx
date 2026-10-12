@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { AuthUser, LoginResponse, MeResponse } from "../types/auth";
 import { api } from "../lib/api";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://api.hotlinecellular.lk/api/v1";
+const API_URL = import.meta.env.VITE_API_URL as string;
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -72,8 +72,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   const logout = () => {
     // Call backend logout (optional - clears refresh token)
-    api("/auth/logout", { method: "POST" }).catch(() => {});
-    
+    api("/auth/logout", { method: "POST" }).catch(() => { });
+
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
@@ -84,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user.isSuperAdmin) return true;
     if (user.permissions?.isSuperAdmin) return true;
     if (user.permissions?.permissions === "ALL") return true;
-    
+
     const effectivePerms = user.permissions?.effectivePermissions || [];
     if (effectivePerms.includes(permission)) return true;
 

@@ -1,6 +1,6 @@
 // API utility with auto token refresh
-// Use environment variable for production, fallback to localhost for development
-const API_URL = import.meta.env.VITE_API_URL || "https://api.hotlinecellular.lk/api/v1";
+// Use environment variable for production, fallback to domain URL
+const API_URL = (import.meta.env.VITE_API_URL as string) || "https://api.hotlinecellular.lk/api/v1";
 interface FetchOptions extends RequestInit {
   skipAuth?: boolean;
 }
@@ -67,11 +67,11 @@ export async function api<T = unknown>(
         const saleData = JSON.parse(fetchOptions.body as string);
         saleData._offlineId = Date.now().toString(); // unique local ID
         saleData.createdAt = new Date().toISOString();
-        
+
         const queue = JSON.parse(localStorage.getItem("offlineSalesQueue") || "[]");
         queue.push(saleData);
         localStorage.setItem("offlineSalesQueue", JSON.stringify(queue));
-        
+
         // Return a mock successful response so the UI proceeds
         return {
           status: "success",
@@ -83,7 +83,7 @@ export async function api<T = unknown>(
     }
     throw err;
   }
-  
+
   // Handle 401 - attempt token refresh
   if (res.status === 401 && !skipAuth) {
     if (!isRefreshing) {
@@ -128,10 +128,10 @@ export async function api<T = unknown>(
 let isSyncing = false;
 export async function syncOfflineData() {
   if (isSyncing || !navigator.onLine) return;
-  
+
   const queue = JSON.parse(localStorage.getItem("offlineSalesQueue") || "[]");
   if (queue.length === 0) return;
-  
+
   isSyncing = true;
   try {
     const res = await apiPost<any>("/sales/sync", { sales: queue });
@@ -139,8 +139,8 @@ export async function syncOfflineData() {
       // Clear queue if sync successful
       localStorage.setItem("offlineSalesQueue", "[]");
       // Could dispatch event to notify UI of successful sync
-      window.dispatchEvent(new CustomEvent('offline-sync-complete', { 
-        detail: { count: queue.length } 
+      window.dispatchEvent(new CustomEvent('offline-sync-complete', {
+        detail: { count: queue.length }
       }));
     }
   } catch (err) {

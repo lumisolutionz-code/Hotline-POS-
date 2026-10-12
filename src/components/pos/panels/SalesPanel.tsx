@@ -157,7 +157,12 @@ export function SalesPanel({
                         {new Date(sale.createdAt).toLocaleString()} • {sale.items?.length || 0} items
                       </p>
                     </div>
-                    <p className="text-lg font-bold text-cyan-400">Rs. {sale.grandTotal?.toFixed(2)}</p>
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-cyan-400">Rs. {sale.grandTotal?.toFixed(2)}</p>
+                      {sale.discountTotal > 0 && (
+                        <p className="text-xs text-rose-400 font-medium">Disc: -Rs. {sale.discountTotal.toFixed(2)}</p>
+                      )}
+                    </div>
                   </div>
                   {sale.status === "COMPLETED" && (
                     <div className="mt-2 pt-2 border-t border-slate-600/30">
@@ -191,7 +196,8 @@ export function SalesPanel({
                             onClick={() => {
                               const customerName = sale.customer?.name || '';
                               const customerPhone = sale.customer?.phone || '';
-                              const html = generateSaleBillHtml(sale, undefined, customerName, customerPhone);
+                              const customerEmail = sale.customer?.email || '';
+                              const html = generateSaleBillHtml(sale, undefined, customerName, customerPhone, customerEmail);
                               printDocument(html, `Receipt-${sale.saleNumber}`, "bill");
                             }} 
                             className="text-xs text-blue-400 hover:text-blue-300"
@@ -202,7 +208,8 @@ export function SalesPanel({
                             onClick={() => {
                               const customerName = sale.customer?.name || '';
                               const customerPhone = sale.customer?.phone || '';
-                              const html = generateSaleInvoiceHtml(sale, undefined, customerName, customerPhone);
+                              const customerEmail = sale.customer?.email || '';
+                              const html = generateSaleInvoiceHtml(sale, undefined, customerName, customerPhone, customerEmail);
                               printDocument(html, `Invoice-${sale.saleNumber}`, "invoice");
                             }} 
                             className="text-xs text-indigo-400 hover:text-indigo-300"
