@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { AuthUser, LoginResponse, MeResponse } from "../types/auth";
 import { api } from "../lib/api";
 
-const API_URL = import.meta.env.VITE_API_URL as string;
+const API_URL = (import.meta.env.VITE_API_URL as string) || "https://api.hotlinecellular.lk/api/v1";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -20,8 +20,20 @@ interface AuthContextType {
 }
 const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    try {
+      const saved = localStorage.getItem("user");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loading, setLoading] = useState<boolean>(() => {
+    const token = localStorage.getItem("accessToken");
+    const saved = localStorage.getItem("user");
+    // If token exists and user is already cached, load immediately without blocking
+    return Boolean(token && !saved);
+  });
   // Check for existing session on mount
   useEffect(() => {
     const initAuth = async () => {

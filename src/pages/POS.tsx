@@ -1,11 +1,13 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { PERMISSIONS } from "../constants/permission";
 import { api } from "../lib/api";
 import { getKeyboardShortcuts, getShopSettings } from "../lib/settings";
-import logo from "../assets/logo.png";
 import { generateDailySalesReportHtml, printDocument } from "../lib/invoiceGenerator";
+
+// Global in-memory cache for product variants & live stock items for instant popup opening
+const productVariantsCache = new Map<string, { data: any; timestamp: number }>();
 
 // Import types from centralized types file
 import {
@@ -35,6 +37,88 @@ import {
   SimReloadPanel,
 } from "../components/pos";
 
+import companyIcon from "../assets/company-icon.png";
+import companyLogo from "../assets/logo.png";
+
+import {
+  Layers,
+  Smartphone,
+  Sparkles,
+  Headphones,
+  Cable,
+  BatteryCharging,
+  SlidersHorizontal,
+  Phone,
+  Watch,
+  Laptop,
+  Shield,
+} from "lucide-react";
+
+const getCategoryIcon = (name: string, className = "w-4 h-4") => {
+  const lower = (name || "").toLowerCase();
+
+  if (/watch/i.test(lower)) {
+    return <Watch className={className} />;
+  }
+  if (/button|keypad|basic\s*phone/i.test(lower)) {
+    return <Phone className={className} />;
+  }
+  if (/part|spare|display|tool|repair|mod/i.test(lower)) {
+    return <SlidersHorizontal className={className} />;
+  }
+  if (/power|charger|battery|adapter|charging/i.test(lower)) {
+    return <BatteryCharging className={className} />;
+  }
+  if (/case|cover|pouch|guard|protector|glass|tempered/i.test(lower)) {
+    return <Shield className={className} />;
+  }
+  if (/cable|cord|wire|lightning|type\s*c/i.test(lower)) {
+    return <Cable className={className} />;
+  }
+  if (/audio|sound|speaker|headset|headphone|earphone|handsfree|bose|jbl|sony/i.test(lower)) {
+    return <Headphones className={className} />;
+  }
+  if (/laptop|macbook|computer|asus|msi|lenovo|hp|acer|dell/i.test(lower)) {
+    return <Laptop className={className} />;
+  }
+  if (/access/i.test(lower)) {
+    return <Sparkles className={className} />;
+  }
+  if (/phone|cellular|smartphone|mobile|apple|samsung|oppo|redmi|xiaomi|huawei/i.test(lower)) {
+    return <Smartphone className={className} />;
+  }
+
+  return <Sparkles className={className} />;
+};
+
+// In-memory & LocalStorage cache helpers for instant (0ms) POS startup
+let memoryCategoryTreeCache: Category[] = [];
+let memoryProductsCache: Product[] = [];
+
+const getInitialCategoryTree = (): Category[] => {
+  if (memoryCategoryTreeCache.length > 0) return memoryCategoryTreeCache;
+  try {
+    const raw = localStorage.getItem("pos_categories_cache");
+    if (raw) {
+      memoryCategoryTreeCache = JSON.parse(raw);
+      return memoryCategoryTreeCache;
+    }
+  } catch {}
+  return [];
+};
+
+const getInitialProducts = (): Product[] => {
+  if (memoryProductsCache.length > 0) return memoryProductsCache;
+  try {
+    const raw = localStorage.getItem("pos_products_cache");
+    if (raw) {
+      memoryProductsCache = JSON.parse(raw);
+      return memoryProductsCache;
+    }
+  } catch {}
+  return [];
+};
+
 /* =======================
    POS Component
 ======================= */
@@ -59,9 +143,9 @@ export default function POS(): JSX.Element {
     PERMISSIONS.CREATE_WARRANTY_CLAIM,
   );
 
-  // State
-  const [categoryTree, setCategoryTree] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  // State with Instant Cache Hydration (Stale-While-Revalidate)
+  const [categoryTree, setCategoryTree] = useState<Category[]>(() => getInitialCategoryTree());
+  const [products, setProducts] = useState<Product[]>(() => getInitialProducts());
   const [selectedParentCategory, setSelectedParentCategory] = useState<
     string | null
   >(null);
@@ -71,9 +155,12 @@ export default function POS(): JSX.Element {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [productPage, setProductPage] = useState<number>(1);
-  const PRODUCTS_PER_PAGE = 40;
+  const PRODUCTS_PER_PAGE = 15;
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(() => {
+    const cached = getInitialProducts();
+    return cached.length === 0;
+  });
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
 
   useEffect(() => {
@@ -119,15 +206,13 @@ export default function POS(): JSX.Element {
   const [selectedWarrantyForClaim, setSelectedWarrantyForClaim] =
     useState<Warranty | null>(null);
 
-  // Serial Number Modal State (for warranty products)
-  const [showSerialModal, setShowSerialModal] = useState<boolean>(false);
+  // Modal State
   const [showVariantModal, setShowVariantModal] = useState<boolean>(false);
+  const [isVariantModalLoading, setIsVariantModalLoading] = useState<boolean>(false);
   const [showCustomerRequestModal, setShowCustomerRequestModal] = useState<boolean>(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const [pendingVariantId, setPendingVariantId] = useState<string | undefined>(undefined);
   const [pendingSerialNumber, setPendingSerialNumber] = useState<string | undefined>(undefined);
-  const [serialNumberInput, setSerialNumberInput] = useState<string>("");
-  const [serialInputType, setSerialInputType] = useState<"IMEI" | "Serial">("IMEI");
   const [toastNotification, setToastNotification] = useState<{ message: string; type: "error" | "success" } | null>(null);
 
   const showError = (msg: string) => {
@@ -165,9 +250,16 @@ export default function POS(): JSX.Element {
     if (Array.isArray(prod.variants) && prod.variants.some((v: any) => String(v.trackingType || "").toUpperCase() === "IMEI")) {
       return true;
     }
+    if (rawProdTracking === "QUANTITY" || (variant && String(variant.trackingType || "").toUpperCase() === "QUANTITY")) {
+      return false;
+    }
+    // Accessories are never IMEI tracked
+    const isAccessory = /(cover|case|glass|protector|pouch|cable|charger|handsfree|headphone|earphone|adapter|battery|holder|strap|film|lens|power bank|speaker|back cover|tempered)/i.test(prod.name || "");
+    if (isAccessory) return false;
+
     const catName = typeof prod.category === "object" ? prod.category?.name || "" : "";
-    if (/phone|mobile|cellular|smartphone|tablet/i.test(catName)) return true;
-    if (/iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei/i.test(prod.name || "")) return true;
+    if (/phone|cellular|smartphone|tablet/i.test(catName) && !/accessory|accessories/i.test(catName)) return true;
+    if (/(iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei)/i.test(prod.name || "")) return true;
     return false;
   };
 
@@ -422,23 +514,27 @@ export default function POS(): JSX.Element {
 
       // If this product is an IMEI product: ALWAYS popup VariantSelectionModal to scan/select IMEI
       if (isImeiProduct(targetProduct, targetVariant)) {
-        try {
-          const res = await api<any>(`/products/${targetProduct._id}/with-variants`).catch(() => null);
-          const fullProduct = (res && res.status === "success" && res.data?.product) ? res.data.product : targetProduct;
-          const variants = (res && res.status === "success" && res.data?.variants) ? res.data.variants : prodVariants;
+        const initialStock = Array.isArray(targetProduct.stockItems) ? targetProduct.stockItems : [];
+        setPendingProduct({ ...targetProduct, variants: prodVariants, stockItems: initialStock });
+        setPendingVariantId(targetVariant?._id || undefined);
+        setPendingSerialNumber(undefined);
+        setIsVariantModalLoading(true);
+        setShowVariantModal(true);
 
-          setPendingProduct({ ...fullProduct, variants });
-          setPendingVariantId(targetVariant?._id || undefined);
-          setPendingSerialNumber(undefined);
-          setShowVariantModal(true);
-          return;
-        } catch (err) {
-          setPendingProduct({ ...targetProduct, variants: prodVariants });
-          setPendingVariantId(targetVariant?._id || undefined);
-          setPendingSerialNumber(undefined);
-          setShowVariantModal(true);
-          return;
-        }
+        api<any>(`/products/${targetProduct._id}/with-variants`)
+          .then((res) => {
+            if (res && res.status === "success" && res.data) {
+              productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
+              applyWithVariantsData(targetProduct, res.data);
+            }
+          })
+          .catch((err) => {
+            console.error("Error fetching product variants in background:", err);
+          })
+          .finally(() => {
+            setIsVariantModalLoading(false);
+          });
+        return;
       }
 
       // QUANTITY PRODUCT:
@@ -478,26 +574,26 @@ export default function POS(): JSX.Element {
       }
 
       // 4. Multiple variants and generic product barcode scanned:
-      try {
-        const res = await api<any>(`/products/${targetProduct._id}/with-variants`);
-        if (res.status === "success" && res.data) {
-          const fullProduct = res.data.product || targetProduct;
-          const variants = res.data.variants || prodVariants;
-
-          setPendingProduct({ ...fullProduct, variants });
-          setPendingVariantId(undefined);
-          setPendingSerialNumber(undefined);
-          setShowVariantModal(true);
-          return;
-        }
-      } catch (err) {
-        console.error("Error fetching product variants:", err);
-      }
-
-      setPendingProduct({ ...targetProduct, variants: prodVariants });
+      const initialStock = Array.isArray(targetProduct.stockItems) ? targetProduct.stockItems : [];
+      setPendingProduct({ ...targetProduct, variants: prodVariants, stockItems: initialStock });
       setPendingVariantId(undefined);
       setPendingSerialNumber(undefined);
+      setIsVariantModalLoading(true);
       setShowVariantModal(true);
+
+      api<any>(`/products/${targetProduct._id}/with-variants`)
+        .then((res) => {
+          if (res && res.status === "success" && res.data) {
+            productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
+            applyWithVariantsData(targetProduct, res.data);
+          }
+        })
+        .catch((err) => {
+          console.error("Error fetching product variants in background:", err);
+        })
+        .finally(() => {
+          setIsVariantModalLoading(false);
+        });
       return;
     }
 
@@ -505,22 +601,27 @@ export default function POS(): JSX.Element {
     showError(`Invalid barcode, Serial, or IMEI not found: "${code}"`);
   };
 
+  const lastFetchTimeRef = useRef<number>(0);
+
   // Fetch data on mount & keep POS continuously synced in background
   useEffect(() => {
-    // Initial fetch with initial loading state
-    fetchData(false);
+    // Initial fetch: silent if we already have cached products, spinner only if completely empty
+    const hasCachedData = productsRef.current.length > 0;
+    fetchData(hasCachedData);
 
-    // Silent background sync every 5 seconds (no UI flicker or spinner)
+    // Silent background sync every 10 seconds (no UI flicker or spinner)
     const interval = setInterval(() => {
       fetchData(true);
-    }, 5000);
+    }, 10000);
 
-    // Immediate background sync when POS window/tab regains focus or visibility
+    // Immediate background sync when POS window/tab regains focus or visibility (throttled to 10s)
     const handleFocus = () => {
-      fetchData(true);
+      if (Date.now() - lastFetchTimeRef.current > 10000) {
+        fetchData(true);
+      }
     };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && Date.now() - lastFetchTimeRef.current > 10000) {
         fetchData(true);
       }
     };
@@ -569,7 +670,6 @@ export default function POS(): JSX.Element {
       showExpensesPanel ||
       showReturnsPanel ||
       showWarrantyPanel ||
-      showSerialModal ||
       showVariantModal ||
       showCustomerRequestModal ||
       showSimReloadPanel ||
@@ -593,7 +693,6 @@ export default function POS(): JSX.Element {
     showExpensesPanel,
     showReturnsPanel,
     showWarrantyPanel,
-    showSerialModal,
     showVariantModal,
     showCustomerRequestModal,
     showSimReloadPanel,
@@ -619,7 +718,6 @@ export default function POS(): JSX.Element {
         showExpensesPanel ||
         showReturnsPanel ||
         showWarrantyPanel ||
-        showSerialModal ||
         showVariantModal ||
         showCustomerRequestModal ||
         showSimReloadPanel ||
@@ -678,7 +776,6 @@ export default function POS(): JSX.Element {
     showExpensesPanel,
     showReturnsPanel,
     showWarrantyPanel,
-    showSerialModal,
     showVariantModal,
     showCustomerRequestModal,
     showSimReloadPanel,
@@ -731,22 +828,36 @@ export default function POS(): JSX.Element {
   }, [cart.length, canViewRepairs, canViewReports]);
 
   const fetchData = async (silent: boolean = false): Promise<void> => {
-    if (!silent) setLoading(true);
+    if (!silent && productsRef.current.length === 0) {
+      setLoading(true);
+    }
+    lastFetchTimeRef.current = Date.now();
     try {
-      const [catData, prodData] = await Promise.all([
-        api<CategoriesResponse>("/categories?tree=true"),
-        api<ProductsResponse>("/products?limit=10000"),
-      ]);
-      if (catData.status === "success" && catData.data?.categories) {
-        setCategoryTree(catData.data.categories);
-      }
-      if (prodData.status === "success" && prodData.data?.products) {
-        setProducts(prodData.data.products);
-      }
+      const catPromise = api<CategoriesResponse>("/categories?tree=true").then((catData) => {
+        if (catData?.status === "success" && catData.data?.categories) {
+          memoryCategoryTreeCache = catData.data.categories;
+          setCategoryTree(catData.data.categories);
+          try {
+            localStorage.setItem("pos_categories_cache", JSON.stringify(catData.data.categories));
+          } catch (e) {}
+        }
+      });
+
+      const prodPromise = api<ProductsResponse>("/products?limit=10000").then((prodData) => {
+        if (prodData?.status === "success" && prodData.data?.products) {
+          memoryProductsCache = prodData.data.products;
+          setProducts(prodData.data.products);
+          try {
+            localStorage.setItem("pos_products_cache", JSON.stringify(prodData.data.products));
+          } catch (e) {}
+        }
+      });
+
+      await Promise.all([catPromise, prodPromise]);
     } catch (err) {
       if (!silent) console.error("Failed to fetch data:", err);
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -876,12 +987,12 @@ export default function POS(): JSX.Element {
   };
 
   // Get subcategories
-  const currentSubcategories: Category[] = selectedParentCategory
-    ? categoryTree.find((c) => c._id === selectedParentCategory)
-        ?.subcategories || []
-    : [];
+  const currentSubcategories: Category[] = useMemo(() => {
+    if (!selectedParentCategory) return [];
+    return categoryTree.find((c) => c._id === selectedParentCategory)?.subcategories || [];
+  }, [selectedParentCategory, categoryTree]);
 
-  const getSelectedCategoryIds = (): string[] => {
+  const selectedCategoryIds = useMemo((): string[] => {
     if (selectedSubCategory) return [selectedSubCategory];
     if (selectedParentCategory) {
       const parent = categoryTree.find((c) => c._id === selectedParentCategory);
@@ -889,84 +1000,87 @@ export default function POS(): JSX.Element {
       return [selectedParentCategory, ...subIds];
     }
     return [];
-  };
+  }, [selectedSubCategory, selectedParentCategory, categoryTree]);
 
   // Filter products (searches by Name, SKU, ItemCode, Barcode, Serial Number, IMEI, and Variant attributes)
-  const filteredProducts = products.filter((p) => {
+  const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
-    let matchesSearch = true;
-    let isSerialOrImeiMatch = false;
+    return products.filter((p) => {
+      let matchesSearch = true;
+      let isSerialOrImeiMatch = false;
 
-    if (q) {
-      const name = (p?.name ? String(p.name) : "").toLowerCase();
-      const sku = (p?.sku ? String(p.sku) : "").toLowerCase();
-      const barcode = (p?.barcode ? String(p.barcode) : "").toLowerCase();
-      const itemCode = (p?.itemCode ? String(p.itemCode) : "").toLowerCase();
-      const serialNumber = (p?.serialNumber ? String(p.serialNumber) : "").toLowerCase();
+      if (q) {
+        const name = (p?.name ? String(p.name) : "").toLowerCase();
+        const sku = (p?.sku ? String(p.sku) : "").toLowerCase();
+        const barcode = (p?.barcode ? String(p.barcode) : "").toLowerCase();
+        const itemCode = (p?.itemCode ? String(p.itemCode) : "").toLowerCase();
+        const serialNumber = (p?.serialNumber ? String(p.serialNumber) : "").toLowerCase();
 
-      // Check serialNumbers array
-      const matchesSerialNumbers = Array.isArray(p?.serialNumbers) && p.serialNumbers.some(
-        (s) => String(s).toLowerCase().includes(q)
+        // Check serialNumbers array
+        const matchesSerialNumbers = Array.isArray(p?.serialNumbers) && p.serialNumbers.some(
+          (s) => String(s).toLowerCase().includes(q)
+        );
+
+        // Check imeis array
+        const matchesImeis = Array.isArray(p?.imeis) && p.imeis.some(
+          (i) => String(i).toLowerCase().includes(q)
+        );
+
+        // Check variants (itemCode, barcode, sku, serialNumber)
+        const matchesVariants = Array.isArray(p?.variants) && p.variants.some(
+          (v: any) =>
+            (v.itemCode && String(v.itemCode).toLowerCase().includes(q)) ||
+            (v.barcode && String(v.barcode).toLowerCase().includes(q)) ||
+            (v.sku && String(v.sku).toLowerCase().includes(q)) ||
+            (v.serialNumber && String(v.serialNumber).toLowerCase().includes(q))
+        );
+
+        const matchesPrimarySerial = Boolean(serialNumber && serialNumber.includes(q));
+
+        isSerialOrImeiMatch = matchesPrimarySerial || matchesSerialNumbers || matchesImeis;
+
+        matchesSearch =
+          name.includes(q) ||
+          sku.includes(q) ||
+          barcode.includes(q) ||
+          itemCode.includes(q) ||
+          isSerialOrImeiMatch ||
+          matchesVariants;
+      }
+
+      if (!matchesSearch) return false;
+
+      // If a serial number or IMEI was matched, show the item immediately across all categories
+      if (isSerialOrImeiMatch) return true;
+
+      // Category matching logic:
+      // - If no category selected, show all
+      // - If parent category selected, show products with that category OR any of its subcategories
+      // - If subcategory selected, show only products with that specific subcategory
+      if (selectedCategoryIds.length === 0) {
+        return true; // No category filter
+      }
+
+      // Check if product's category or subcategory matches selected categories
+      const productCategoryId = p.category?._id || "";
+      const productSubcategoryId = p.subcategory?._id || "";
+
+      return (
+        selectedCategoryIds.includes(productCategoryId) ||
+        selectedCategoryIds.includes(productSubcategoryId)
       );
-
-      // Check imeis array
-      const matchesImeis = Array.isArray(p?.imeis) && p.imeis.some(
-        (i) => String(i).toLowerCase().includes(q)
-      );
-
-      // Check variants (itemCode, barcode, sku, serialNumber)
-      const matchesVariants = Array.isArray(p?.variants) && p.variants.some(
-        (v: any) =>
-          (v.itemCode && String(v.itemCode).toLowerCase().includes(q)) ||
-          (v.barcode && String(v.barcode).toLowerCase().includes(q)) ||
-          (v.sku && String(v.sku).toLowerCase().includes(q)) ||
-          (v.serialNumber && String(v.serialNumber).toLowerCase().includes(q))
-      );
-
-      const matchesPrimarySerial = Boolean(serialNumber && serialNumber.includes(q));
-
-      isSerialOrImeiMatch = matchesPrimarySerial || matchesSerialNumbers || matchesImeis;
-
-      matchesSearch =
-        name.includes(q) ||
-        sku.includes(q) ||
-        barcode.includes(q) ||
-        itemCode.includes(q) ||
-        isSerialOrImeiMatch ||
-        matchesVariants;
-    }
-
-    if (!matchesSearch) return false;
-
-    // If a serial number or IMEI was matched, show the item immediately across all categories
-    if (isSerialOrImeiMatch) return true;
-
-    // Category matching logic:
-    // - If no category selected, show all
-    // - If parent category selected, show products with that category OR any of its subcategories
-    // - If subcategory selected, show only products with that specific subcategory
-    const selectedIds = getSelectedCategoryIds();
-    if (selectedIds.length === 0) {
-      return true; // No category filter
-    }
-
-    // Check if product's category or subcategory matches selected categories
-    const productCategoryId = p.category?._id || "";
-    const productSubcategoryId = p.subcategory?._id || "";
-
-    return (
-      selectedIds.includes(productCategoryId) ||
-      selectedIds.includes(productSubcategoryId)
-    );
-  });
+    });
+  }, [products, searchQuery, selectedCategoryIds]);
 
   const totalProductPages = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE));
   const safeProductPage = Math.min(Math.max(1, productPage), totalProductPages);
-  const paginatedProducts = filteredProducts.slice(
-    (safeProductPage - 1) * PRODUCTS_PER_PAGE,
-    safeProductPage * PRODUCTS_PER_PAGE
-  );
+  const paginatedProducts = useMemo(() => {
+    return filteredProducts.slice(
+      (safeProductPage - 1) * PRODUCTS_PER_PAGE,
+      safeProductPage * PRODUCTS_PER_PAGE
+    );
+  }, [filteredProducts, safeProductPage, PRODUCTS_PER_PAGE]);
 
   useEffect(() => {
     if (productsGridRef.current) {
@@ -998,28 +1112,28 @@ export default function POS(): JSX.Element {
     const endItem = Math.min(safeProductPage * PRODUCTS_PER_PAGE, filteredProducts.length);
 
     return (
-      <div className="flex items-center justify-between gap-3 py-0.5">
-        <div className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
-          Showing <span className="font-bold text-slate-700 dark:text-slate-200">{startItem}-{endItem}</span> of <span className="font-bold text-slate-700 dark:text-slate-200">{filteredProducts.length}</span>
+      <div className="flex items-center gap-3">
+        <div className="text-xs text-slate-500 font-medium whitespace-nowrap">
+          Showing <span className="font-bold text-slate-700">{startItem}-{endItem}</span> of <span className="font-bold text-slate-700">{filteredProducts.length}</span>
         </div>
 
         {totalProductPages > 1 && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             {/* Prev Button */}
             <button
               onClick={() => setProductPage((p) => Math.max(1, p - 1))}
               disabled={safeProductPage === 1}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-all cursor-pointer ${
+              className={`px-2 py-1 rounded-md text-xs font-medium flex items-center gap-1 border transition-all cursor-pointer ${
                 safeProductPage === 1
-                  ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60"
-                  : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-sky-600 dark:hover:text-sky-400 shadow-xs active:scale-95"
+                  ? "bg-slate-50 text-slate-300 border-slate-200 cursor-not-allowed opacity-60"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 shadow-2xs"
               }`}
               title="Previous Page"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
-              <span className="hidden sm:inline">Prev</span>
+              <span>Prev</span>
             </button>
 
             {/* Page Numbers */}
@@ -1027,7 +1141,7 @@ export default function POS(): JSX.Element {
               {getPageNumbers().map((p, idx) => {
                 if (p === "...") {
                   return (
-                    <span key={`dots-${idx}`} className="px-1 text-xs text-slate-400 dark:text-slate-600 select-none">
+                    <span key={`dots-${idx}`} className="px-1 text-xs text-slate-400 select-none">
                       ...
                     </span>
                   );
@@ -1038,10 +1152,10 @@ export default function POS(): JSX.Element {
                   <button
                     key={`page-${pageNum}`}
                     onClick={() => setProductPage(pageNum)}
-                    className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`min-w-[24px] h-6 px-1.5 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center justify-center ${
                       isActive
-                        ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-xs"
-                        : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-sky-600 dark:hover:text-sky-400 active:scale-95"
+                        ? "bg-blue-600 text-white shadow-2xs"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                     }`}
                   >
                     {pageNum}
@@ -1054,15 +1168,15 @@ export default function POS(): JSX.Element {
             <button
               onClick={() => setProductPage((p) => Math.min(totalProductPages, p + 1))}
               disabled={safeProductPage === totalProductPages}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-all cursor-pointer ${
+              className={`px-2 py-1 rounded-md text-xs font-medium flex items-center gap-1 border transition-all cursor-pointer ${
                 safeProductPage === totalProductPages
-                  ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60"
-                  : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-sky-600 dark:hover:text-sky-400 shadow-xs active:scale-95"
+                  ? "bg-slate-50 text-slate-300 border-slate-200 cursor-not-allowed opacity-60"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 shadow-2xs"
               }`}
               title="Next Page"
             >
-              <span className="hidden sm:inline">Next</span>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <span>Next</span>
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
@@ -1073,19 +1187,68 @@ export default function POS(): JSX.Element {
   };
 
   const resolveProductImage = (p: Product): string | null => {
-    let img = p.images?.[0];
+    // 1. Direct product image
+    let img = (p.images && p.images.length > 0 && p.images[0])
+      ? p.images[0]
+      : (p as any).image || (p as any).thumbnail;
+
+    // 2. Variant image if product has variants
     if (!img && p.variants && Array.isArray(p.variants)) {
       for (const v of p.variants) {
         if (v.images && v.images.length > 0 && v.images[0]) {
           img = v.images[0];
           break;
         }
+        if ((v as any).image) {
+          img = (v as any).image;
+          break;
+        }
       }
     }
+
+    // 3. Fallback to main category image
+    if (!img) {
+      const prodCatId = typeof p.category === "object" ? p.category?._id : p.category;
+      const prodSubcatId = typeof p.subcategory === "object" ? p.subcategory?._id : p.subcategory;
+
+      let matchedCat: Category | undefined;
+      if (prodCatId) {
+        matchedCat = categoryTree.find((c) => String(c._id) === String(prodCatId));
+      }
+      if (!matchedCat && (prodCatId || prodSubcatId)) {
+        for (const root of categoryTree) {
+          if (root.subcategories && root.subcategories.some((s) => String(s._id) === String(prodCatId) || String(s._id) === String(prodSubcatId))) {
+            matchedCat = root;
+            break;
+          }
+        }
+      }
+
+      if (typeof p.category === "object" && (p.category as any)?.image) {
+        img = (p.category as any).image;
+      } else if (matchedCat?.image) {
+        img = matchedCat.image;
+      } else {
+        const catName = String((typeof p.category === "object" ? p.category?.name : matchedCat?.name) || "").toLowerCase();
+        const prodName = (p.name || "").toLowerCase();
+        if (catName.includes("audio") || prodName.includes("airpod") || prodName.includes("earbud") || prodName.includes("headset") || prodName.includes("speaker")) {
+          img = "/uploads/categories/audio.jpg";
+        } else if (catName.includes("phone") || prodName.includes("phone") || prodName.includes("galaxy") || prodName.includes("iphone") || prodName.includes("redmi") || prodName.includes("nokia")) {
+          img = "/uploads/categories/mobile_phones.jpg";
+        } else if (catName.includes("charger") || catName.includes("power") || catName.includes("cable") || prodName.includes("cable") || prodName.includes("charger") || prodName.includes("adapter")) {
+          img = "/uploads/categories/chargers_power.jpg";
+        } else if (catName.includes("repair") || catName.includes("battery") || prodName.includes("battery") || prodName.includes("display") || prodName.includes("screen")) {
+          img = "/uploads/categories/repair_parts.jpg";
+        } else {
+          img = "/uploads/categories/accessories.jpg";
+        }
+      }
+    }
+
     if (!img) return null;
     if (img.startsWith("http://") || img.startsWith("https://") || img.startsWith("data:")) return img;
     const cleanPath = img.startsWith("/") ? img : `/${img}`;
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://localhost:5000');
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, "") : "https://api.hotlinecellular.lk");
     return `${apiBase}${cleanPath}`;
   };
 
@@ -1130,93 +1293,145 @@ export default function POS(): JSX.Element {
     return displayPrice;
   };
 
-  const handleProductClick = async (product: Product) => {
+  const applyWithVariantsData = (originalProd: Product, data: any) => {
+    const fetchedVariants = Array.isArray(data.variants) ? data.variants : [];
+    const variants = fetchedVariants.length > 0 ? fetchedVariants : (originalProd.variants || []);
+
+    const resolvedStock =
+      data.product?.stock !== undefined && data.product?.stock !== null
+        ? Number(data.product.stock)
+        : (originalProd.stock !== undefined && originalProd.stock !== null ? Number(originalProd.stock) : 0);
+
+    const catalogPrice = Number(originalProd.effectivePrice ?? originalProd.sellingPrice ?? 0);
+    const resolvedSellingPrice =
+      Number(data.product?.sellingPrice) > 0
+        ? Number(data.product.sellingPrice)
+        : catalogPrice;
+    const resolvedOriginalPrice =
+      Number(data.product?.originalPrice) > 0
+        ? Number(data.product.originalPrice)
+        : (Number(originalProd.originalPrice) > 0 ? Number(originalProd.originalPrice) : resolvedSellingPrice);
+    const resolvedEffectivePrice =
+      Number(data.product?.effectivePrice) > 0
+        ? Number(data.product.effectivePrice)
+        : resolvedSellingPrice;
+
+    const stockItems = Array.isArray(data.stockItems) ? data.stockItems : [];
+
+    setPendingProduct((prev) => {
+      if (!prev || prev._id !== originalProd._id) return prev;
+      return {
+        ...prev,
+        ...(data.product || {}),
+        variants,
+        stockItems,
+        stock: resolvedStock,
+        sellingPrice: resolvedSellingPrice,
+        originalPrice: resolvedOriginalPrice,
+        effectivePrice: resolvedEffectivePrice,
+      };
+    });
+
+    setProducts((prev) =>
+      prev.map((p) =>
+        p._id === originalProd._id
+          ? {
+              ...p,
+              ...(data.product || {}),
+              variants,
+              stockItems,
+              stock: resolvedStock,
+              sellingPrice: resolvedSellingPrice,
+              originalPrice: resolvedOriginalPrice,
+              effectivePrice: resolvedEffectivePrice,
+            }
+          : p
+      )
+    );
+  };
+
+  const handleProductClick = (product: Product) => {
     const existingVariants = Array.isArray(product.variants) ? product.variants : [];
+    const isImei = isImeiProduct(product);
 
-    try {
-      const res = await api<any>(`/products/${product._id}/with-variants`);
-      if (res.status === "success" && res.data) {
-        const fetchedVariants = Array.isArray(res.data.variants) ? res.data.variants : [];
-        const variants = fetchedVariants.length > 0 ? fetchedVariants : existingVariants;
+    // If product only has a single dummy variant (e.g. value === "None" or "Default"), auto-select it
+    const firstVarAttrs = existingVariants[0]?.attributes;
+    const isSingleDummyVariant =
+      existingVariants.length === 1 &&
+      (!firstVarAttrs ||
+        (Array.isArray(firstVarAttrs) && (firstVarAttrs.length === 0 ||
+          firstVarAttrs.some((a: any) =>
+            typeof a === "object"
+              ? !a.value || a.value === "None" || a.value === "Default"
+              : a === "None" || a === "Default"
+          ))));
 
-        const resolvedStock =
-          res.data.product?.stock !== undefined && res.data.product?.stock !== null
-            ? Number(res.data.product.stock)
-            : (product.stock !== undefined && product.stock !== null ? Number(product.stock) : 0);
+    const needsModal = isImei || existingVariants.length > 1 || (existingVariants.length === 1 && !isSingleDummyVariant);
 
-        const catalogPrice = Number(product.effectivePrice ?? product.sellingPrice ?? 0);
-        const resolvedSellingPrice =
-          Number(res.data.product?.sellingPrice) > 0
-            ? Number(res.data.product.sellingPrice)
-            : catalogPrice;
-        const resolvedOriginalPrice =
-          Number(res.data.product?.originalPrice) > 0
-            ? Number(res.data.product.originalPrice)
-            : (Number(product.originalPrice) > 0 ? Number(product.originalPrice) : resolvedSellingPrice);
-        const resolvedEffectivePrice =
-          Number(res.data.product?.effectivePrice) > 0
-            ? Number(res.data.product.effectivePrice)
-            : resolvedSellingPrice;
-
-        const fullProduct = {
-          ...product,
-          ...(res.data.product || {}),
-          stock: resolvedStock,
-          sellingPrice: resolvedSellingPrice,
-          originalPrice: resolvedOriginalPrice,
-          effectivePrice: resolvedEffectivePrice,
+    // 1. Simple product -> Add to cart IMMEDIATELY (0ms, no network delay)!
+    if (!needsModal) {
+      if (existingVariants.length === 1 && isSingleDummyVariant) {
+        const singleVar = {
+          ...existingVariants[0],
+          stock: (existingVariants[0] as any).stock ?? existingVariants[0].stockQty ?? product.stock,
+          stockQty: existingVariants[0].stockQty ?? (existingVariants[0] as any).stock ?? product.stock,
         };
-
-        // If product only has a single dummy variant (e.g. value === "None" or "Default"), auto-select it
-        const isSingleDummyVariant =
-          variants.length === 1 &&
-          (!variants[0].attributes ||
-            variants[0].attributes.length === 0 ||
-            variants[0].attributes.some((a: any) =>
-              typeof a === "object"
-                ? !a.value || a.value === "None" || a.value === "Default"
-                : a === "None" || a === "Default"
-            ));
-
-        if (variants.length > 1 || (variants.length === 1 && !isSingleDummyVariant)) {
-          setPendingProduct({ ...fullProduct, variants });
-          setPendingVariantId(undefined);
-          setPendingSerialNumber(undefined);
-          setShowVariantModal(true);
-          return;
-        } else if (variants.length === 1 && isSingleDummyVariant) {
-          const singleVar = {
-            ...variants[0],
-            stock: variants[0].stock ?? variants[0].stockQty ?? resolvedStock,
-            stockQty: variants[0].stockQty ?? variants[0].stock ?? resolvedStock,
-          };
-          addToCart(fullProduct, undefined, singleVar);
-          return;
-        } else {
-          addToCart(fullProduct);
-          return;
-        }
+        addToCart(product, undefined, singleVar, undefined, undefined, true);
+      } else {
+        addToCart(product, undefined, undefined, undefined, undefined, true);
       }
-    } catch (err) {
-      console.error("Error fetching product variants:", err);
-    }
-
-    if (existingVariants.length > 0) {
-      setPendingProduct({ ...product, variants: existingVariants });
-      setPendingVariantId(undefined);
-      setPendingSerialNumber(undefined);
-      setShowVariantModal(true);
       return;
     }
 
-    addToCart(product);
+    // 2. Multi-variant or IMEI product -> OPEN POPUP IMMEDIATELY in 0ms!
+    const initialStockItems = Array.isArray(product.stockItems) ? product.stockItems : [];
+    setPendingProduct({ ...product, variants: existingVariants, stockItems: initialStockItems });
+    setPendingVariantId(existingVariants[0]?._id);
+    setPendingSerialNumber(undefined);
+    setShowVariantModal(true);
+
+    // Check in-memory cache first for instant populated response
+    const cached = productVariantsCache.get(product._id);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < 45000) {
+      applyWithVariantsData(product, cached.data);
+      setIsVariantModalLoading(false);
+      return;
+    }
+
+    // Indicate live loading inside the modal box
+    setIsVariantModalLoading(true);
+
+    // Fetch fresh variants & stockItems in background
+    api<any>(`/products/${product._id}/with-variants`)
+      .then((res) => {
+        if (res.status === "success" && res.data) {
+          productVariantsCache.set(product._id, { data: res.data, timestamp: Date.now() });
+          applyWithVariantsData(product, res.data);
+        }
+      })
+      .catch((err) => {
+        console.error("Error fetching product variants in background:", err);
+      })
+      .finally(() => {
+        setIsVariantModalLoading(false);
+      });
   };
 
   // Cart functions
   const addToCart = (product: Product, serialNumber?: string, variant?: any, stockItemId?: string, stockItemPrice?: number, skipSerial: boolean = false): void => {
-    // If product has variants and no specific variant was passed, open VariantSelectionModal first
-    const hasVariants = Boolean(product.variants && product.variants.length > 0);
-    if (hasVariants && !variant) {
+    // If product has multiple variants and no specific variant was passed, open VariantSelectionModal first
+    const hasMultipleVariants = Boolean(product.variants && product.variants.length > 1);
+    if (hasMultipleVariants && !variant) {
+      handleProductClick(product);
+      return;
+    }
+
+    // Check if product is an IMEI-tracked device
+    const isImei = isImeiProduct(product, variant);
+
+    // If IMEI device and no serial/stockItemId passed, open VariantSelectionModal to scan/select IMEI
+    if (isImei && !serialNumber && !stockItemId && !skipSerial) {
       handleProductClick(product);
       return;
     }
@@ -1245,18 +1460,6 @@ export default function POS(): JSX.Element {
               : effectivePrice));
     const discountAmount = Math.max(0, originalPrice - effectivePrice) || discAmount;
     const itemPrice = originalPrice;
-    
-    // Check if product has warranty and needs serial number
-    const isImei = (product.trackingType?.toUpperCase() === "IMEI") || (variant?.trackingType?.toUpperCase() === "IMEI");
-    const hasWarranty = (product.warrantyDuration ?? 0) > 0 || isImei || (product.trackingType?.toUpperCase() === "SERIAL");
-
-    // If product has warranty and no serial number provided, show modal
-    if (hasWarranty && !serialNumber && !variant && !skipSerial) {
-      setPendingProduct(product);
-      setSerialNumberInput("");
-      setShowSerialModal(true);
-      return;
-    }
 
     const formatVariantDisplay = (v: any) => {
       if (!v) return undefined;
@@ -1269,7 +1472,7 @@ export default function POS(): JSX.Element {
       return v.itemCode || v.sku || undefined;
     };
 
-    if (serialNumber || isImei) {
+    if (serialNumber || (isImei && stockItemId)) {
       // For warranty / IMEI products, each unit needs a unique serial number / IMEI
       if (serialNumber) {
         const serialExists = cart.some(
@@ -1339,72 +1542,7 @@ export default function POS(): JSX.Element {
     showSuccess(`Added "${product.name || "item"}" to order`);
   };
 
-  // Handle serial number confirmation
-  const handleSerialNumberConfirm = async (): Promise<void> => {
-    if (!pendingProduct) return;
 
-    const trimmedSerial = serialNumberInput.trim();
-    if (!trimmedSerial) {
-      showError("Please enter a serial number or IMEI");
-      return;
-    }
-
-    // Check if serial number already in cart
-    const serialExists = cart.some(
-      (item) => item.serialNumber === trimmedSerial,
-    );
-    if (serialExists) {
-      showError("This serial number is already in the cart!");
-      return;
-    }
-
-    try {
-      // Validate serial number exactly via lookup route
-      let stockItem = null;
-      try {
-        let res = null;
-        if (serialInputType === "IMEI") {
-          res = await api<{ status?: string; data?: any }>(`/inventory/lookup/imei/${trimmedSerial}`);
-        } else {
-          res = await api<{ status?: string; data?: any }>(`/inventory/lookup/serial/${trimmedSerial}`);
-        }
-        
-        if (res.status === "success" && res.data?.stockItem) {
-          stockItem = res.data.stockItem;
-        }
-      } catch (e: any) {
-        // Fallback in case of unexpected exceptions, though api usually catches them
-        console.error("Error in lookup API:", e);
-      }
-
-      if (!stockItem) {
-        setSerialNumberInput("");
-        showError("The entered serial number/IMEI is not valid or not available in stock.");
-        return;
-      }
-
-      const itemProductId = stockItem.product?._id || stockItem.product || stockItem.stock?.product;
-      if (String(itemProductId) !== String(pendingProduct._id)) {
-        setSerialNumberInput("");
-        const expectedName = pendingProduct.name || String(pendingProduct._id);
-        const actualName = stockItem.product?.name || String(itemProductId);
-        showError(`IMEI belongs to "${actualName}", not "${expectedName}".`);
-        return;
-      }
-
-      // Add product with serial number
-      addToCart(pendingProduct, trimmedSerial, stockItem.variant, stockItem._id, stockItem.sellingPrice);
-
-      // Reset modal state
-      setShowSerialModal(false);
-      setPendingProduct(null);
-      setSerialNumberInput("");
-    } catch (error) {
-      console.error("Error validating serial number:", error);
-      setSerialNumberInput("");
-      showError("Failed to validate serial number. Please try again.");
-    }
-  };
 
 
 
@@ -1564,7 +1702,7 @@ export default function POS(): JSX.Element {
   }
 
   return (
-    <div className="h-screen bg-gradient-to-br from-sky-50 via-blue-50 to-white dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 flex flex-col overflow-hidden relative">
+    <div className="h-screen w-screen bg-[#f0f4f9] flex overflow-hidden font-sans select-none relative">
       {/* Global Toast Notification */}
       {toastNotification && (
         <div 
@@ -1577,13 +1715,13 @@ export default function POS(): JSX.Element {
           }}
         >
           {toastNotification.type === 'error' ? (
-            <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+            <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center shrink-0">
               <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
           ) : (
-            <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+            <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center shrink-0">
               <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
@@ -1592,7 +1730,7 @@ export default function POS(): JSX.Element {
           <span className="text-sm font-semibold tracking-wide">{toastNotification.message}</span>
           <button 
             onClick={() => setToastNotification(null)} 
-            className="ml-2 text-white/80 hover:text-white p-1 rounded-lg hover:bg-black/10 transition-colors"
+            className="ml-2 text-white/80 hover:text-white p-1 rounded-lg hover:bg-black/10 transition-colors cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -1601,225 +1739,275 @@ export default function POS(): JSX.Element {
         </div>
       )}
 
-      {/* Modern Header */}
-      <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-sky-200/50 dark:border-slate-700 px-4 py-2.5 flex items-center justify-between flex-shrink-0 shadow-lg shadow-sky-100/20 dark:shadow-none">
-        {/* Logo & Brand */}
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <img src={logo} alt="Hotline POS" className="w-11 h-11 object-contain bg-sky-100 rounded-xl p-1" />
-            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-sky-400 rounded-full border-2 border-white animate-pulse"></div>
+      {/* 1. Left Dark Sidebar (Categories) */}
+      <aside className="w-56 bg-[#0f172a] text-slate-300 flex flex-col shrink-0 h-full overflow-hidden border-r border-slate-800/80 z-10">
+        {/* Logo & Brand Header */}
+        <div className="flex items-center gap-3 p-4 border-b border-slate-800/80 shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 shadow-md shadow-sky-500/10 overflow-hidden border border-slate-700/60">
+            <img
+              src={companyIcon}
+              alt="Hotline Cellular Logo"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                e.currentTarget.src = companyLogo;
+              }}
+            />
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-slate-800 tracking-tight dark:text-white">
+          <div className="min-w-0">
+            <h1 className="text-sm font-extrabold text-white tracking-tight leading-snug">
               Hotline POS
             </h1>
-            <p className="text-[10px] text-sky-600 -mt-0.5 font-medium tracking-wide">
+            <p className="text-[9px] text-slate-400 font-bold tracking-wider uppercase">
               POINT OF SALE
             </p>
           </div>
         </div>
 
-        {/* Search Bar - Enhanced */}
-        <div className="relative w-[420px]">
-          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-            <svg
-              className="w-5 h-5 text-slate-500 dark:text-slate-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-          </div>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && searchQuery.trim().length >= 3) {
-                e.preventDefault();
-                const code = searchQuery.trim();
-                setSearchQuery("");
-                if (searchInputRef.current) {
-                  searchInputRef.current.blur();
-                }
-                processScannedBarcode(code);
-              }
-            }}
-            placeholder="Search products, SKU, Serial, IMEI, or scan barcode..."
-            className="w-full pl-12 pr-4 py-2.5 bg-white border border-sky-200 rounded-xl text-slate-800 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all text-sm shadow-sm dark:bg-slate-800 dark:text-white"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-700 transition-colors dark:text-slate-400"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          )}
+        {/* Categories Section Title */}
+        <div className="px-4 pt-4 pb-2 shrink-0">
+          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+            CATEGORIES
+          </span>
         </div>
 
-        {/* Action Buttons & User Info */}
-        <div className="flex items-center gap-2">
-          {/* Print Today's Sales (12:00 AM to Now) — Left from Refresh Button */}
+        {/* Categories Scrollable Nav */}
+        <nav className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+          {/* All Products Button */}
           <button
-            onClick={handlePrintTodaySales}
-            disabled={printingTodaySales}
-            className="flex items-center justify-center w-9 h-9 bg-white/60 dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-700 border border-emerald-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-emerald-700 dark:hover:text-emerald-400 transition-all shadow-sm group cursor-pointer"
-            title="Print Today's Sales (12:00 AM - Now)"
+            onClick={() => handleParentCategoryClick(null)}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs font-semibold transition-all cursor-pointer ${
+              !selectedParentCategory
+                ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
+                : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
+            }`}
           >
-            {printingTodaySales ? (
-              <svg className="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            <Layers className={`w-4 h-4 shrink-0 ${!selectedParentCategory ? "text-white" : "text-blue-400"}`} />
+            <span className="flex-1 truncate">All Products</span>
+          </button>
+
+          {/* Individual Category Items */}
+          {categoryTree.map((cat) => {
+            const isParentActive = selectedParentCategory === cat._id;
+            return (
+              <div key={cat._id}>
+                <button
+                  onClick={() => handleParentCategoryClick(cat._id)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs font-medium transition-all cursor-pointer group ${
+                    isParentActive
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
+                      : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                  }`}
+                >
+                  <span className={`shrink-0 ${isParentActive ? "text-white" : "text-slate-400 group-hover:text-slate-200"}`}>
+                    {getCategoryIcon(cat.name, "w-4 h-4")}
+                  </span>
+                  <span className="flex-1 truncate text-xs">{cat.name}</span>
+                  {cat.subcategories && cat.subcategories.length > 0 && (
+                    <svg
+                      className={`w-3.5 h-3.5 text-slate-500 transition-transform ${
+                        isParentActive ? "rotate-90 text-white" : ""
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Subcategories */}
+                <div
+                  className={`overflow-hidden transition-all duration-200 ${
+                    isParentActive && cat.subcategories && cat.subcategories.length > 0
+                      ? "max-h-96 opacity-100 mt-1 pl-3 space-y-1"
+                      : "max-h-0 opacity-0"
+                  }`}
+                >
+                  {cat.subcategories?.map((sub) => {
+                    const isSubActive = selectedSubCategory === sub._id;
+                    return (
+                      <button
+                        key={sub._id}
+                        onClick={() => handleSubCategoryClick(sub._id)}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs transition-all cursor-pointer ${
+                          isSubActive
+                            ? "bg-blue-500/20 text-sky-400 font-bold border-l-2 border-sky-400"
+                            : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                        <span className="truncate">{sub.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Down-Left Corner: Hardware Scanner Section */}
+        <div className="bg-white border-t border-slate-200 p-4 shrink-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-0.5 shrink-0 text-blue-600" aria-hidden="true">
+              <span className="w-1 h-3.5 bg-blue-600 rounded-xs inline-block"></span>
+              <span className="w-[1.5px] h-3.5 bg-blue-600 rounded-xs inline-block"></span>
+              <span className="w-[3px] h-3.5 bg-blue-600 rounded-xs inline-block"></span>
+              <span className="w-[1.5px] h-3.5 bg-blue-600 rounded-xs inline-block"></span>
+              <span className="w-1 h-3.5 bg-blue-600 rounded-xs inline-block"></span>
+            </div>
+            <span className="text-xs font-bold text-[#1e3a8a] tracking-tight">
+              Hardware Scanner Ready
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500 leading-snug">
+            Scan any IMEI barcode to verify &amp; add directly to order.
+          </p>
+        </div>
+      </aside>
+
+      {/* 2. Main Work Area (Top Header + Product Catalog + Cart) */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-[#f0f4f9]">
+        {/* Top Header Bar */}
+        <header className="px-4 pt-3 pb-2 flex items-center justify-between gap-2.5 shrink-0">
+          {/* Search Input with Scanner Icon */}
+          <div className="relative flex-1 max-w-sm xl:max-w-md">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
-            ) : (
-              <svg
-                className="w-4 h-4 group-hover:scale-110 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-all text-slate-600 dark:text-slate-300"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            </div>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchQuery.trim().length >= 3) {
+                  e.preventDefault();
+                  const code = searchQuery.trim();
+                  setSearchQuery("");
+                  if (searchInputRef.current) {
+                    searchInputRef.current.blur();
+                  }
+                  processScannedBarcode(code);
+                }
+              }}
+              placeholder="Search products, SKU, Serial, IMEI, or scan barcode..."
+              className="w-full pl-10 pr-10 py-2 bg-white border border-slate-200/90 rounded-full text-slate-900 font-medium placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-xs shadow-2xs"
+              style={{ color: '#0f172a' }}
+            />
+            {searchQuery ? (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
-                />
-              </svg>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            ) : (
+              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 7h1v10H7V7zm4 0h2v10h-2V7zm5 0h1v10h-1V7z" />
+                </svg>
+              </div>
             )}
-          </button>
+          </div>
 
-          <button
-            onClick={() => fetchData()}
-            className="flex items-center justify-center w-9 h-9 bg-white/60 dark:bg-slate-800/80 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-sky-700 dark:hover:text-white transition-all shadow-sm group"
-            title="Refresh Data"
-            disabled={loading}
-          >
-            <svg
-              className={`w-4 h-4 group-hover:text-sky-500 transition-colors ${loading ? 'animate-spin' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          {/* Center Pill Action Buttons */}
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+            {/* Print Today's Sales */}
+            <button
+              onClick={handlePrintTodaySales}
+              disabled={printingTodaySales}
+              className="flex items-center justify-center w-8 h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
+              title="Print Today's Sales (12:00 AM - Now)"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
+              {printingTodaySales ? (
+                <svg className="w-3.5 h-3.5 animate-spin text-slate-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+              )}
+            </button>
 
-          {/* Customer Product Request Button (right next to refresh button) */}
-          <button
-            onClick={() => setShowCustomerRequestModal(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20 dark:bg-slate-800/80 dark:hover:bg-slate-700 border border-amber-300/80 dark:border-amber-600/50 rounded-xl text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-all group shadow-sm cursor-pointer"
-            title="Customer Product Request (Out of stock notes)"
-          >
-            <svg
-              className="w-4 h-4 group-hover:scale-110 transition-transform text-amber-600 dark:text-amber-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            {/* Refresh */}
+            <button
+              onClick={() => fetchData()}
+              disabled={loading}
+              className="flex items-center justify-center w-8 h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
+              title="Refresh Data"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
-              />
-            </svg>
-            <span className="text-xs font-semibold hidden xl:block">
-              Request Item
-            </span>
-          </button>
+              <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
 
-          <button
-            onClick={() => setShowSimReloadPanel(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-indigo-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-white transition-all group shadow-sm cursor-pointer"
-            title="SIM Cards & Mobile Reload"
-          >
-            <svg
-              className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            {/* Request Item */}
+            <button
+              onClick={() => setShowCustomerRequestModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#fef9ee] hover:bg-[#fef3c7] text-[#b45309] border border-[#fde68a] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              title="Customer Product Request"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM12 11h.01M9 11h.01M15 11h.01M12 14h.01M9 14h.01M15 14h.01"
-              />
-            </svg>
-            <span className="text-xs font-semibold hidden xl:block">
-              SIM & Reload
-            </span>
-          </button>
-          
-          <button
-            onClick={() => {
-              setShowSalesPanel(true);
-              fetchSalesData();
-            }}
-            className="flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-sky-700 dark:hover:text-white transition-all group shadow-sm"
-            title="Sales Reports"
-          >
-            <svg
-              className="w-4 h-4 group-hover:text-sky-500 transition-colors"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+              <svg className="w-3.5 h-3.5 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+              <span>Request Item</span>
+            </button>
+
+            {/* SIM & Reload */}
+            <button
+              onClick={() => setShowSimReloadPanel(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] border border-[#bfdbfe] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              title="SIM Cards & Mobile Reload"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-              />
-            </svg>
-            <span className="text-xs font-medium hidden xl:block">Sales</span>
-          </button>
+              <svg className="w-3.5 h-3.5 text-[#2563eb]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM12 11h.01M9 11h.01M15 11h.01M12 14h.01M9 14h.01M15 14h.01" />
+              </svg>
+              <span>SIM & Reload</span>
+            </button>
+
+            {/* Sales */}
+            <button
+              onClick={() => {
+                setShowSalesPanel(true);
+                fetchSalesData();
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f0fdf4] hover:bg-[#dcfce7] text-[#16a34a] border border-[#bbf7d0] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              title="Sales Reports"
+            >
+              <svg className="w-3.5 h-3.5 text-[#16a34a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <span>Sales</span>
+            </button>
+
+            {/* Repairs */}
             {canViewRepairs && (
               <button
                 onClick={() => {
                   setShowRepairsPanel(true);
                   fetchRepairs();
                 }}
-                className="relative flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-slate-700 border border-blue-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-white transition-all group shadow-sm"
+                className="relative flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f8fafc] hover:bg-[#f1f5f9] text-[#475569] border border-[#e2e8f0] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
                 title="Repairs"
               >
-                <div className="relative">
-                  <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  {repairs.filter((r) => (r.status || "").toUpperCase().trim() === "COMPLETED").length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white dark:border-slate-800" title="Completed repairs ready"></span>
-                  )}
-                </div>
-                <span className="text-xs font-medium hidden xl:block">
-                  Repairs
-                </span>
+                <svg className="w-3.5 h-3.5 text-[#475569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Repairs</span>
                 {repairs.filter((r) => {
                   const s = (r.status || "").toUpperCase().trim();
                   return s !== "CANCELLED" && s !== "COMPLETED";
                 }).length > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-gradient-to-r from-blue-500 to-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-lg shadow-blue-500/30 animate-pulse">
+                  <span className="w-4 h-4 bg-blue-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center -ml-0.5">
                     {repairs.filter((r) => {
                       const s = (r.status || "").toUpperCase().trim();
                       return s !== "CANCELLED" && s !== "COMPLETED";
@@ -1829,906 +2017,586 @@ export default function POS(): JSX.Element {
               </button>
             )}
 
+            {/* Expenses */}
             <button
               onClick={() => setShowExpensesPanel(true)}
-              className="relative flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-orange-50 dark:hover:bg-slate-700 border border-orange-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-orange-700 dark:hover:text-white transition-all group shadow-sm"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#fff7ed] hover:bg-[#ffedd5] text-[#ea580c] border border-[#fed7aa] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
               title="Expenses"
             >
-              <div className="relative">
-                <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h3m-9 5h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <span className="text-xs font-medium hidden xl:block">
-                Expenses
-              </span>
-            </button>
-          {canProcessReturn && (
-            <button
-              onClick={() => setShowReturnsPanel(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-sky-700 dark:hover:text-white transition-all group shadow-sm"
-              title="Returns"
-            >
-              <svg
-                className="w-4 h-4 group-hover:text-sky-500 transition-colors"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                />
+              <svg className="w-3.5 h-3.5 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h3m-9 5h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <span className="text-xs font-medium hidden xl:block">
-                Returns
-              </span>
+              <span>Expenses</span>
             </button>
-          )}
-          {canViewWarranties && (
-            <button
-              onClick={() => setShowWarrantyPanel(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-slate-700 border border-blue-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-white transition-all group shadow-sm"
-              title="Warranty Lookup"
-            >
-              <svg
-                className="w-4 h-4 group-hover:text-blue-500 transition-colors"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                />
-              </svg>
-              <span className="text-xs font-medium hidden xl:block">
-                Warranty
-              </span>
-            </button>
-          )}
-          <button
-            onClick={() => navigate("/settings")}
-            className="flex items-center gap-2 px-3 py-2 bg-white/60 dark:bg-slate-800/80 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white transition-all group shadow-sm"
-            title="Settings"
-          >
-            <svg
-              className="w-4 h-4 group-hover:text-slate-700 dark:group-hover:text-white transition-colors"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-            </svg>
-          </button>
 
-          {/* Connectivity Status */}
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${isOnline ? 'bg-emerald-50 border-emerald-200 text-emerald-600 dark:bg-emerald-900/30 dark:border-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-600 dark:bg-rose-900/30 dark:border-rose-800'} shadow-sm`}>
-            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
-            <span className="text-xs font-bold">{isOnline ? 'Online' : 'Offline Mode'}</span>
-            {!isOnline && (
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.163a1.5 1.5 0 013.111-1.258" />
-              </svg>
+            {/* Returns */}
+            {canProcessReturn && (
+              <button
+                onClick={() => setShowReturnsPanel(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f0f9ff] hover:bg-[#e0f2fe] text-[#0284c7] border border-[#bae6fd] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+                title="Returns"
+              >
+                <svg className="w-3.5 h-3.5 text-[#0284c7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                </svg>
+                <span>Returns</span>
+              </button>
             )}
+
+            {/* Warranty */}
+            {canViewWarranties && (
+              <button
+                onClick={() => setShowWarrantyPanel(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#faf5ff] hover:bg-[#f3e8ff] text-[#7e22ce] border border-[#e9d5ff] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+                title="Warranty Lookup"
+              >
+                <svg className="w-3.5 h-3.5 text-[#7e22ce]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                <span>Warranty</span>
+              </button>
+            )}
+
+            {/* Settings */}
+            <button
+              onClick={() => navigate("/settings")}
+              className="flex items-center justify-center w-8 h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
+              title="Settings"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
           </div>
 
-          {/* Divider */}
-          <div className="w-px h-8 bg-sky-200 dark:bg-slate-700 mx-1"></div>
+          {/* Right User Profile & Connectivity */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Online Status */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#f0fdf4] border border-[#bbf7d0] text-[#16a34a] text-xs font-bold shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-[#16a34a] animate-pulse"></span>
+              <span>{isOnline ? "Online" : "Offline"}</span>
+            </div>
 
-          {/* User Profile */}
-          <div className="flex items-center gap-3 pl-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-100 to-blue-100 dark:from-slate-800 dark:to-slate-700 border border-sky-200 dark:border-slate-600 flex items-center justify-center shadow-inner">
-              <span className="text-sm font-bold text-sky-600 dark:text-sky-400">
-                {(user?.username?.[0] || "U").toUpperCase()}
-              </span>
+            <div className="w-px h-6 bg-slate-200 mx-1"></div>
+
+            {/* User Info */}
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-[#bae6fd] text-[#0369a1] font-extrabold flex items-center justify-center text-xs shadow-2xs">
+                {(user?.username?.[0] || "C").toUpperCase()}
+              </div>
+              <div className="text-left hidden lg:block">
+                <p className="text-slate-800 text-xs font-bold leading-tight">
+                  {user?.username || "cashier1"}
+                </p>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                  {user?.roles?.[0]?.name || "CASHIER"}
+                </p>
+              </div>
             </div>
-            <div className="text-right hidden lg:block">
-              <p className="text-slate-800 text-sm font-medium leading-tight dark:text-white">
-                {user?.username || "User"}
-              </p>
-              <p className="text-[10px] text-sky-600/80 dark:text-sky-400/80 font-medium">
-                {user?.roles?.[0]?.name || "Cashier"}
-              </p>
-            </div>
+
+            {/* Logout */}
             <button
               onClick={handleLogout}
-              className="p-2 bg-white/60 dark:bg-slate-800/80 hover:bg-red-50 dark:hover:bg-red-950/40 border border-red-200 dark:border-slate-700 hover:border-red-300 text-red-600 dark:text-red-400 hover:text-red-700 rounded-xl transition-all shadow-sm"
+              className="w-8 h-8 flex items-center justify-center bg-white hover:bg-red-50 text-red-500 border border-slate-200 hover:border-red-200 rounded-xl transition-all shadow-2xs shrink-0 cursor-pointer"
               title="Logout"
             >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-                />
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Categories Sidebar - Optimized */}
-        <aside className="w-52 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-r border-sky-200/50 dark:border-slate-800 flex flex-col flex-shrink-0">
-          <div className="p-4 border-b border-sky-200/50 dark:border-slate-800">
-            <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wider flex items-center gap-2 dark:text-slate-400">
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
-                />
-              </svg>
-              Categories
-            </h3>
-          </div>
-          <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-thin scrollbar-thumb-sky-200 dark:scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            <button
-              onClick={() => handleParentCategoryClick(null)}
-              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all duration-200 ${ !selectedParentCategory ? "bg-gradient-to-r from-sky-500/20 to-blue-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/30 dark:border-sky-500/40 shadow-lg shadow-sky-500/5" : "text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800/80 hover:text-slate-800 dark:hover:text-white border-transparent" }`}
-            >
-              <span
-                className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${ !selectedParentCategory ? "bg-sky-500/20 text-sky-600 dark:text-sky-300" : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400" }`}
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                  />
-                </svg>
-              </span>
-              <span className="font-medium text-sm">All Products</span>
-            </button>
-
-            {categoryTree.map((cat) => (
-              <div key={cat._id}>
-                <button
-                  onClick={() => handleParentCategoryClick(cat._id)}
-                  className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all duration-200 ${ selectedParentCategory === cat._id ? "bg-gradient-to-r from-sky-500/20 to-blue-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/30 dark:border-sky-500/40 shadow-lg shadow-sky-500/5" : "text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800/80 hover:text-slate-800 dark:hover:text-white border-transparent" }`}
-                >
-                  <span
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold transition-all ${ selectedParentCategory === cat._id ? "bg-sky-500/20 text-sky-600 dark:text-sky-300" : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400" }`}
-                  >
-                    {cat.name.charAt(0)}
-                  </span>
-                  <span className="font-medium flex-1 truncate text-sm">
-                    {cat.name}
-                  </span>
-                  {cat.subcategories && cat.subcategories.length > 0 && (
-                    <svg
-                      className={`w-4 h-4 transition-transform duration-200 ${selectedParentCategory === cat._id ? "rotate-90" : ""}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
-                  )}
-                </button>
-
-                {/* Subcategories */}
-                <div
-                  className={`overflow-hidden transition-all duration-200 ${selectedParentCategory === cat._id ? "max-h-96 opacity-100 mt-1" : "max-h-0 opacity-0"}`}
-                >
-                  {cat.subcategories?.map((sub) => (
-                    <button
-                      key={sub._id}
-                      onClick={() => handleSubCategoryClick(sub._id)}
-                      className={`w-full ml-3 flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left text-sm transition-all duration-200 ${ selectedSubCategory === sub._id ? "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-l-2 border-blue-500" : "text-slate-500 dark:text-slate-400 hover:bg-sky-50 dark:hover:bg-slate-800/80 hover:text-slate-700 dark:hover:text-slate-200 border-transparent" }`}
-                    >
-                      <span
-                        className={`w-7 h-7 rounded-md flex items-center justify-center text-xs font-medium ${ selectedSubCategory === sub._id ? "bg-blue-500/20 text-blue-600 dark:text-blue-300" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400" }`}
-                      >
-                        {sub.name.charAt(0)}
-                      </span>
-                      <span className="truncate">{sub.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </nav>
-        </aside>
-
-        {/* Products Grid - Enhanced */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Breadcrumb & Top Pagination Bar */}
-          <div className="px-5 py-2.5 bg-white/80 dark:bg-slate-900/80 border-b border-sky-200/50 dark:border-slate-800 flex items-center justify-between flex-shrink-0 gap-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 text-sm">
-                <span className="text-slate-600 dark:text-slate-400">Showing</span>
-                <span className="px-2.5 py-1 bg-sky-100 dark:bg-sky-950/60 rounded-lg text-sky-700 dark:text-sky-300 font-medium border border-sky-200 dark:border-sky-800/60">
+        {/* Catalog + Cart Columns */}
+        <div className="flex-1 flex min-h-0 px-4 pb-3.5 gap-3.5 overflow-hidden">
+          {/* Middle: Product Catalog */}
+          <div className="flex-1 flex flex-col min-w-0 bg-transparent overflow-hidden">
+            {/* Breadcrumb + Top Pagination Row */}
+            <div className="flex items-center justify-between px-0.5 py-1 shrink-0 mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-500">Showing</span>
+                <span className="px-3 py-1 bg-blue-50 border border-blue-200/60 rounded-full text-blue-600 font-semibold text-xs shadow-2xs">
                   {!selectedParentCategory
                     ? "All Products"
-                    : categoryTree.find((c) => c._id === selectedParentCategory)
-                        ?.name}
+                    : categoryTree.find((c) => c._id === selectedParentCategory)?.name}
                 </span>
                 {selectedSubCategory && (
                   <>
-                    <svg
-                      className="w-4 h-4 text-slate-500 dark:text-slate-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
-                    <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-950/60 rounded-lg text-blue-700 dark:text-blue-300 font-medium border border-blue-200 dark:border-blue-800/60">
-                      {
-                        currentSubcategories.find(
-                          (s) => s._id === selectedSubCategory,
-                        )?.name
-                      }
+                    <span className="text-slate-400 text-xs">/</span>
+                    <span className="px-3 py-1 bg-sky-50 border border-sky-200/60 rounded-full text-sky-600 font-semibold text-xs shadow-2xs">
+                      {currentSubcategories.find((s) => s._id === selectedSubCategory)?.name}
                     </span>
                   </>
                 )}
               </div>
-            </div>
-            
-            {/* Top Pagination Controls */}
-            <div>
-              {renderPaginationControls() || (
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">0 products</span>
-              )}
-            </div>
-          </div>
 
-          {/* Products Grid */}
-          <div ref={productsGridRef} className="flex-1 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            <div className="grid grid-cols-4 gap-4">
-              {paginatedProducts.map((product) => {
-                const displayPrice = getProductDisplayPrice(product);
-                const originalPrice = getProductOriginalPrice(product, displayPrice);
-                const hasOffer =
-                  (Boolean(product?.hasActiveOffer) ||
-                    Boolean(
-                      product?.offer?.isActive &&
-                        product?.discountAmount &&
-                        product.discountAmount > 0
-                    )) && originalPrice > displayPrice;
-                const isOutOfStock = (product?.stock ?? 0) === 0;
-                const isLowStock =
-                  (product?.stock ?? 0) > 0 && (product?.stock ?? 0) <= 10;
-                const productImg = resolveProductImage(product);
-
-                return (
-                  <div
-                    key={product._id}
-                    className={`group relative bg-white/80 dark:bg-slate-800/90 backdrop-blur-sm border border-sky-200/50 dark:border-slate-700/60 rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-sky-500/10 hover:border-sky-300/50 hover:-translate-y-1 ${ isOutOfStock ? "opacity-60 grayscale-[30%]" : "" }`}
-                  >
-                    {/* Offer Badge */}
-                    {hasOffer && (
-                      <div className="absolute top-3 right-3 z-10">
-                        <div className="px-2 py-1 bg-gradient-to-r from-orange-500 to-rose-500 text-white text-[10px] font-bold rounded-lg shadow-lg shadow-orange-500/30 uppercase tracking-wide">
-                          {product?.offer?.type === "PERCENTAGE"
-                            ? `${product?.offer?.value}% OFF`
-                            : `Rs. ${(product?.discountAmount || (originalPrice - displayPrice)).toLocaleString()} OFF`}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Product Image / Letter Banner */}
-                    <div className="relative h-28 bg-gradient-to-br from-sky-100/50 to-blue-100/50 dark:from-slate-700/50 dark:to-slate-800/50 flex items-center justify-center overflow-hidden">
-                      {productImg ? (
-                        <img
-                          src={productImg}
-                          alt={product.name || "Product"}
-                          className="w-full h-full object-contain p-2 transition-all duration-300 group-hover:scale-105"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = "none";
-                            const next = (e.target as HTMLElement).nextElementSibling as HTMLElement;
-                            if (next) next.style.display = "flex";
-                          }}
-                        />
-                      ) : null}
-
-                      <div
-                        style={{ display: productImg ? "none" : "flex" }}
-                        className={`w-14 h-14 rounded-xl flex items-center justify-center text-2xl font-bold transition-all duration-300 ${ isOutOfStock ? "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400" : "bg-gradient-to-br from-sky-500/20 to-blue-500/20 text-sky-600 dark:text-sky-300 group-hover:scale-110" }`}
-                      >
-                        {(product?.name?.[0] || "P").toUpperCase()}
-                      </div>
-                      
-                      {/* Quick Add Overlay on Hover */}
-                      {!isOutOfStock && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleProductClick(product);
-                          }}
-                          className="absolute inset-0 bg-sky-600/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer backdrop-blur-[2px]"
-                          title={product.variants && product.variants.length > 0 ? "Select Variant" : "Quick Add to Cart"}
-                        >
-                          <span className="flex items-center gap-1.5 text-white font-semibold text-sm drop-shadow-md">
-                            <svg
-                              className="w-4 h-4"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                              />
-                            </svg>
-                            {product.variants && product.variants.length > 0 ? "Select Variant" : "Quick Add"}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Product Info */}
-                    <div className="p-3">
-                      {/* Stock and Condition Badges */}
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-1.5">
-                          <div
-                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${ isOutOfStock ? "bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60" : isLowStock ? "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60" : "bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60" }`}
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full ${ isOutOfStock ? "bg-red-500" : isLowStock ? "bg-amber-500" : "bg-sky-500" }`}
-                            ></span>
-                            {isOutOfStock
-                              ? "Out of stock"
-                              : `${product?.stock} in stock`}
-                          </div>
-                          
-                          {(!product.condition || product.condition.toUpperCase() === 'NEW') && (
-                            <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[10px] font-bold rounded uppercase tracking-wide border border-blue-200 dark:border-blue-800/50">
-                              New
-                            </span>
-                          )}
-                          {product.condition && product.condition.toUpperCase() === 'USED' && (
-                            <span className="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px] font-bold rounded uppercase tracking-wide border border-slate-300 dark:border-slate-600">
-                              Used
-                            </span>
-                          )}
-                          {product.hasActiveOffer && (
-                            <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-bold rounded uppercase tracking-wide border border-purple-200 dark:border-purple-800/50 flex items-center gap-1">
-                              Offer
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedProductForDetails(product);
-                          }}
-                          className="p-0.5 text-slate-500 hover:text-slate-700 transition-colors dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
-                          title="View Details"
-                        >
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                            />
-                          </svg>
-                        </button>
-                      </div>
-
-                      {/* Product Name */}
-                      <h3 className="text-slate-800 font-semibold text-sm leading-tight line-clamp-2 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors dark:text-white">
-                        {product?.name}
-                      </h3>
-                      <p className="text-xs text-slate-500 font-mono dark:text-slate-400">
-                        {product?.sku}
-                      </p>
-
-                      {/* Price Display */}
-                      <div className="flex items-baseline gap-1.5 mt-1">
-                        <span className="text-base font-bold text-sky-600 dark:text-sky-400">
-                          Rs. {displayPrice.toLocaleString()}
-                        </span>
-                        {hasOffer && originalPrice > displayPrice && (
-                          <span className="text-xs text-slate-500 line-through dark:text-slate-400">
-                            Rs. {originalPrice.toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Offer Description */}
-                      {hasOffer && product?.offer?.description && (
-                        <p className="text-xs text-orange-600/80 dark:text-orange-400 truncate flex items-center gap-1 mt-0.5">
-                          <svg
-                            className="w-3 h-3 flex-shrink-0"
-                            fill="currentColor"
-                            viewBox="0 0 20 20"
-                          >
-                            <path
-                              fillRule="evenodd"
-                              d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
-                          {product.offer.description}
-                        </p>
-                      )}
-
-                      {/* Add to Cart Button */}
-                      <button
-                        onClick={() => handleProductClick(product)}
-                        disabled={isOutOfStock}
-                        className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 mt-3 cursor-pointer ${ isOutOfStock ? "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed" : "bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white shadow-md hover:shadow-lg hover:shadow-sky-500/25" }`}
-                      >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                          />
-                        </svg>
-                        {product.variants && product.variants.length > 0
-                          ? "Select Variant"
-                          : "Add to Cart"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {filteredProducts.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-20">
-                <div className="w-24 h-24 rounded-full bg-sky-100 dark:bg-slate-800 flex items-center justify-center mb-6 border border-sky-200 dark:border-slate-700">
-                  <svg
-                    className="w-12 h-12 text-sky-500 dark:text-sky-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                    />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-semibold text-slate-800 mb-2 dark:text-white">
-                  No products found
-                </h3>
-                <p className="text-slate-500 text-sm text-center max-w-sm dark:text-slate-400">
-                  Try adjusting your search or filter to find what you're
-                  looking for.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Cart Section - Premium Design */}
-        <div className="w-80 bg-gradient-to-b from-white via-sky-50/50 to-blue-50/50 dark:from-slate-900 dark:via-slate-900/95 dark:to-slate-900 border-l border-sky-200/50 dark:border-slate-800 flex flex-col flex-shrink-0 shadow-2xl shadow-sky-100/20 dark:shadow-none">
-          {/* Cart Header */}
-          <div className="p-4 border-b border-sky-200/50 dark:border-slate-800 flex items-center justify-between bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500/20 to-blue-500/20 flex items-center justify-center border border-sky-500/30 dark:border-sky-500/40">
-                <svg
-                  className="w-5 h-5 text-sky-600 dark:text-sky-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                  />
-                </svg>
-              </div>
               <div>
-                <h2 className="text-base font-bold text-slate-800 dark:text-white">
-                  Current Order
-                </h2>
-                {cart.length > 0 && (
-                  <p className="text-xs text-slate-600 dark:text-slate-400">
-                    {cart.reduce((sum, item) => sum + item.quantity, 0)} items
-                  </p>
+                {renderPaginationControls() || (
+                  <span className="text-xs text-slate-500 font-medium">0 products</span>
                 )}
               </div>
             </div>
-            {cart.length > 0 && (
-              <button
-                onClick={clearCart}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-lg border border-red-200 dark:border-red-900/60 transition-all"
-              >
-                <svg
-                  className="w-3.5 h-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-                Clear
-              </button>
-            )}
-          </div>
 
-          {/* Cart Items */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16">
-                <div className="w-20 h-20 rounded-full bg-sky-100 dark:bg-slate-800 flex items-center justify-center mb-4 border border-sky-200 dark:border-slate-700">
-                  <svg
-                    className="w-10 h-10 text-sky-500 dark:text-sky-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                    />
-                  </svg>
-                </div>
-                <h3 className="text-slate-800 font-medium mb-1 dark:text-white">
-                  No items yet
-                </h3>
-                <p className="text-slate-500 text-sm text-center max-w-[200px] dark:text-slate-400">
-                  Add products from the catalog to start an order
-                </p>
-              </div>
-            ) : (
-              cart.map((item, index) => {
-                const hasItemOffer =
-                  item.hasActiveOffer ||
-                  (item.offer?.isActive && (item.discountAmount ?? 0) > 0);
-                return (
-                  <div
-                    key={
-                      item.serialNumber
-                        ? `${item._id}_${item.serialNumber}`
-                        : `${item._id}_${index}`
-                    }
-                    className="bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm rounded-2xl p-3.5 border border-sky-200/60 dark:border-slate-700/80 hover:border-sky-300 dark:hover:border-slate-600 transition-all group shadow-sm"
-                  >
-                    <div className="flex items-start gap-3">
-                      {/* Item Number */}
-                      <div className="w-7 h-7 rounded-lg bg-sky-100 dark:bg-sky-950/70 flex items-center justify-center text-xs font-bold text-sky-700 dark:text-sky-300 flex-shrink-0 mt-0.5 shadow-2xs">
-                        {index + 1}
-                      </div>
+            {/* Products Grid */}
+            <div ref={productsGridRef} className="flex-1 overflow-y-auto pr-1 pb-4 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent">
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                {paginatedProducts.map((product) => {
+                  const displayPrice = getProductDisplayPrice(product);
+                  const originalPrice = getProductOriginalPrice(product, displayPrice);
+                  const hasOffer =
+                    (Boolean(product?.hasActiveOffer) ||
+                      Boolean(
+                        product?.offer?.isActive &&
+                          product?.discountAmount &&
+                          product.discountAmount > 0
+                      )) && originalPrice > displayPrice;
+                  const isOutOfStock = (product?.stock ?? 0) === 0;
+                  const isLowStock =
+                    (product?.stock ?? 0) > 0 && (product?.stock ?? 0) <= 10;
+                  const productImg = resolveProductImage(product);
+                  const firstVarAttrs = product.variants?.[0]?.attributes;
+                  const hasOnlyDummyAttr = Array.isArray(firstVarAttrs) && (
+                    firstVarAttrs.length === 0 ||
+                    firstVarAttrs.some((a: any) =>
+                      typeof a === "object"
+                        ? !a.value || a.value === "None" || a.value === "Default"
+                        : a === "None" || a === "Default"
+                    )
+                  );
+                  const needsVariantSelection =
+                    isImeiProduct(product) ||
+                    (product.variants &&
+                      product.variants.length > 0 &&
+                      !(product.variants.length === 1 && (!firstVarAttrs || hasOnlyDummyAttr)));
 
-                      {/* Item Details */}
-                      <div className="flex-1 min-w-0">
-                        {/* Title & Remove Button */}
-                        <div className="flex items-start justify-between gap-2">
-                          <h4 className="text-slate-800 dark:text-white font-semibold text-sm leading-snug break-words flex-1 min-w-0">
-                            {item.name}
-                          </h4>
-                          <button
-                            onClick={() => removeFromCart(index)}
-                            className="p-1 -mr-1 -mt-0.5 text-slate-400 hover:text-red-500 hover:bg-red-500/10 dark:hover:bg-red-950/40 rounded-lg transition-all cursor-pointer flex-shrink-0"
-                            title="Remove item"
-                          >
-                            <svg
-                              className="w-4 h-4"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
+                  return (
+                    <div
+                      key={product._id}
+                      className={`bg-white rounded-2xl p-3 border border-slate-200/90 shadow-2xs hover:shadow-xs hover:border-blue-500 transition-all flex flex-col justify-between group ${
+                        isOutOfStock ? "opacity-60" : ""
+                      }`}
+                    >
+                      {/* Inner Image Container with Badges & Action */}
+                      <div className="w-full bg-[#f0f4f9] rounded-xl p-2.5 flex flex-col justify-between h-32 sm:h-36 relative overflow-hidden group/img">
+                        {/* Top Badge & Action Row */}
+                        <div className="flex items-center justify-between w-full z-10 gap-1">
+                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                            {/* Stock Badge */}
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold tracking-tight shadow-2xs ${
+                                isOutOfStock
+                                  ? "bg-red-50 text-red-600 border border-red-200"
+                                  : isLowStock
+                                  ? "bg-amber-50 text-amber-800 border border-amber-200/70"
+                                  : "bg-[#feeacc] text-[#92400e] border border-amber-200/60"
+                              }`}
                             >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M6 18L18 6M6 6l12 12"
-                              />
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  isOutOfStock ? "bg-red-500" : "bg-[#f59e0b]"
+                                }`}
+                              ></span>
+                              {isOutOfStock ? "0 in stock" : `${product?.stock ?? 0} in stock`}
+                            </span>
+
+                            {/* Tracking Type Badge (IMEI / BULK) */}
+                            {isImeiProduct(product) ? (
+                              <span className="px-2 py-0.5 bg-[#e0edff] text-[#2563eb] text-[10px] font-extrabold rounded-md uppercase tracking-wider">
+                                IMEI
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-extrabold rounded-md uppercase tracking-wider border border-slate-200/60">
+                                BULK
+                              </span>
+                            )}
+                            {product.condition && product.condition.toUpperCase() === "USED" && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9.5px] font-extrabold rounded-md uppercase tracking-wider">
+                                USED
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Three Dots Button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedProductForDetails(product);
+                            }}
+                            className="w-6 h-6 rounded-full bg-white shadow-xs flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all cursor-pointer shrink-0"
+                            title="View Details"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
                             </svg>
                           </button>
                         </div>
 
-                        {/* Variant & Serial Badges Row */}
-                        {(item.variantDisplay || item.serialNumber || hasItemOffer || item.isSimReload) && (
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                            {item.isSimReload && (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-200/80 dark:border-purple-800/60">
-                                <span>{item.simReloadType === "RELOAD" ? "⚡ Reload" : "📶 SIM"}</span>
-                                {item.provider && <span>({item.provider})</span>}
-                              </span>
-                            )}
-                            {item.variantDisplay && (
-                              <span className="inline-flex items-center text-[11px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/60 px-2 py-0.5 rounded-md border border-sky-200/80 dark:border-sky-800/60">
-                                {item.variantDisplay}
-                              </span>
-                            )}
-                            {item.serialNumber && (
-                              <span
-                                className="inline-flex items-center gap-1 text-[11px] font-mono font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-200/80 dark:border-indigo-800/60"
-                                title={`Serial / IMEI: ${item.serialNumber}`}
-                              >
-                                <span>📱</span>
-                                <span>{item.serialNumber}</span>
-                              </span>
-                            )}
-                            {hasItemOffer && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 bg-gradient-to-r from-orange-100 to-rose-100 dark:from-orange-950/60 dark:to-rose-950/60 text-orange-700 dark:text-orange-300 text-[10px] font-bold rounded-md border border-orange-200 dark:border-orange-800/60">
-                                OFFER
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Unit Price & Discount Controls */}
-                        <div className="flex items-center justify-between gap-2 mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60">
-                          <div className="flex items-center gap-1 text-xs">
-                            <span className="text-slate-400 dark:text-slate-500 text-[11px]">Price:</span>
-                            <span className="text-sky-600 dark:text-sky-400 font-semibold whitespace-nowrap">
-                              Rs. {Number(item.originalPrice ?? item.sellingPrice ?? 0).toLocaleString()}
-                            </span>
-                          </div>
-
-                          {canApplyDiscount && (
-                            <div className="flex items-center gap-1 bg-rose-50/90 dark:bg-rose-950/40 px-2 py-0.5 rounded-lg border border-rose-200 dark:border-rose-800/60 focus-within:border-rose-400 focus-within:ring-1 focus-within:ring-rose-400 transition-all">
-                              <span className="text-rose-600 dark:text-rose-400 text-[11px] font-bold whitespace-nowrap select-none">
-                                -Rs.
-                              </span>
-                              <input 
-                                type="number"
-                                className="w-14 bg-transparent text-rose-700 dark:text-rose-300 text-xs font-bold focus:outline-none hide-arrows placeholder:text-rose-300 dark:placeholder:text-rose-700 text-right"
-                                value={item.discountAmount ?? ""}
-                                placeholder="0"
-                                onChange={(e) => {
-                                  const newCart = [...cart];
-                                  const rawVal = e.target.value;
-                                  const val = parseFloat(rawVal);
-                                  const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
-                                  if (!isNaN(val) && val >= 0) {
-                                    newCart[index].discountAmount = val;
-                                    newCart[index].effectivePrice = Math.max(0, base - val);
-                                    setCart(newCart);
-                                  } else if (rawVal === "") {
-                                    // @ts-expect-error - Expected number but resetting with empty string
-                                    newCart[index].discountAmount = "";
-                                    newCart[index].effectivePrice = base;
-                                    setCart(newCart);
-                                  }
-                                }}
-                                onBlur={() => {
-                                  const newCart = [...cart];
-                                  if (item.discountAmount === undefined || String(item.discountAmount) === "") {
-                                    newCart[index].discountAmount = 0;
-                                    const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
-                                    newCart[index].effectivePrice = base;
-                                    setCart(newCart);
-                                  }
-                                }}
-                              />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Quantity Controls & Line Total */}
-                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
-                          <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 rounded-lg p-0.5 border border-slate-200/80 dark:border-slate-700">
-                            <button
-                              onClick={() =>
-                                updateQuantity(
-                                  item._id,
-                                  item.quantity - 1,
-                                  item.serialNumber,
-                                  item.variantId
-                                )
-                              }
-                              className="w-6 h-6 rounded bg-white dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs cursor-pointer"
-                              disabled={!!item.serialNumber || item.quantity <= 1}
-                              title={item.serialNumber ? "Serialized items are quantity 1" : "Decrease quantity"}
-                            >
-                              <svg
-                                className="w-3 h-3"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M20 12H4"
-                                />
-                              </svg>
-                            </button>
-                            <input
-                              type="number"
-                              value={item.quantity}
-                              onChange={(e) =>
-                                updateQuantity(
-                                  item._id,
-                                  parseInt(e.target.value) || 1,
-                                  item.serialNumber,
-                                  item.variantId
-                                )
-                              }
-                              className="w-8 text-center bg-transparent text-slate-800 text-xs font-bold focus:outline-none dark:text-white hide-arrows"
-                              min="1"
-                              max={item.serialNumber ? "1" : undefined}
-                              disabled={!!item.serialNumber}
+                        {/* Centered Image */}
+                        <div className="flex-1 w-full flex items-center justify-center my-1 overflow-hidden">
+                          {productImg ? (
+                            <img
+                              src={productImg}
+                              alt={product.name || "Product"}
+                              loading="lazy"
+                              decoding="async"
+                              className="max-h-20 sm:max-h-24 max-w-[85%] object-contain transition-transform duration-200 group-hover:scale-105"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                const fallbackBase = "https://api.hotlinecellular.lk";
+                                if (target.src && !target.src.includes("hotlinecellular.lk") && target.dataset.triedProduction !== "true") {
+                                  target.dataset.triedProduction = "true";
+                                  const path = target.src.replace(/^https?:\/\/[^\/]+/, "");
+                                  target.src = `${fallbackBase}${path}`;
+                                  return;
+                                }
+                                if (target.dataset.triedCategory !== "true") {
+                                  target.dataset.triedCategory = "true";
+                                  target.src = "https://api.hotlinecellular.lk/uploads/categories/accessories.jpg";
+                                  return;
+                                }
+                                target.style.display = "none";
+                                const next = target.nextElementSibling as HTMLElement;
+                                if (next) next.style.display = "flex";
+                              }}
                             />
-                            <button
-                              onClick={() =>
-                                updateQuantity(
-                                  item._id,
-                                  item.quantity + 1,
-                                  item.serialNumber,
-                                  item.variantId
-                                )
-                              }
-                              className="w-6 h-6 rounded bg-white dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs cursor-pointer"
-                              disabled={!!item.serialNumber}
-                              title={item.serialNumber ? "Serialized items are quantity 1" : "Increase quantity"}
-                            >
-                              <svg
-                                className="w-3 h-3"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                                />
-                              </svg>
-                            </button>
-                          </div>
-                          <div className="flex flex-col items-end">
-                            <span className="text-slate-800 font-bold text-sm dark:text-white whitespace-nowrap">
-                              Rs. {getLineTotal(item).toLocaleString()}
-                            </span>
-                            {Number(item.discountAmount) > 0 && (
-                              <div className="flex items-center gap-1 mt-0.5">
-                                <span className="line-through text-[10px] text-slate-400 font-medium">
-                                  Rs. {((Number(item.originalPrice ?? item.sellingPrice) || 0) * item.quantity).toLocaleString()}
-                                </span>
-                                <span className="text-[10px] text-rose-500 font-semibold whitespace-nowrap">
-                                  - Rs. {(Number(item.discountAmount) * item.quantity).toLocaleString()}
-                                </span>
-                              </div>
-                            )}
+                          ) : null}
+                          <div
+                            style={{ display: productImg ? "none" : "flex" }}
+                            className="w-12 h-12 rounded-lg bg-white/80 text-blue-600 flex items-center justify-center text-lg font-bold shadow-2xs"
+                          >
+                            {(product?.name?.[0] || "P").toUpperCase()}
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
 
-          {/* Cart Footer - Totals & Pay Button */}
-          <div className="p-4 border-t border-sky-200/50 dark:border-slate-800 bg-gradient-to-t from-white to-sky-50/50 dark:from-slate-900 dark:to-slate-900">
-            {/* Order Summary */}
-            <div className="space-y-2 mb-4">
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-slate-600 dark:text-slate-400">Subtotal</span>
-                <span className="text-slate-700 font-medium dark:text-slate-300">
-                  Rs. {rawSubtotal.toLocaleString()}
-                </span>
+                      {/* Title & Price */}
+                      <div className="mt-3">
+                        <h3
+                          className="text-xs sm:text-[13px] font-extrabold text-slate-800 uppercase tracking-tight truncate leading-snug"
+                          title={product?.name}
+                        >
+                          {product?.name}
+                        </h3>
+                        <div className="flex items-baseline gap-1.5 mt-1">
+                          <span className="text-[15px] sm:text-[16px] font-extrabold text-[#2563eb] tracking-tight">
+                            Rs. {displayPrice.toLocaleString()}
+                          </span>
+                          {hasOffer && originalPrice > displayPrice && (
+                            <span className="text-[11px] text-slate-400 line-through font-medium">
+                              Rs. {originalPrice.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bottom Add / Select Variant Button */}
+                      <button
+                        onClick={() => handleProductClick(product)}
+                        disabled={isOutOfStock}
+                        className={`w-full py-1.5 sm:py-2 px-3 rounded-xl font-bold text-xs sm:text-[12.5px] transition-all duration-150 flex items-center justify-center gap-1 mt-2.5 cursor-pointer shadow-2xs active:scale-[0.98] ${
+                          isOutOfStock
+                            ? "bg-slate-100 text-slate-400 cursor-not-allowed hover:bg-slate-100 hover:text-slate-400"
+                            : needsVariantSelection
+                            ? "bg-[#0f172a] text-white hover:bg-[#2563eb] hover:text-white group-hover:bg-[#2563eb] group-hover:text-white"
+                            : "bg-[#ebf3ff] text-[#2563eb] hover:bg-[#2563eb] hover:text-white group-hover:bg-[#2563eb] group-hover:text-white"
+                        }`}
+                      >
+                        + {needsVariantSelection ? "Select IMEI / Variant" : "Add to Order"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-              {totalDiscount > 0 && (
-                <div className="flex justify-between items-center text-sm text-rose-500 font-medium">
-                  <span>Discount</span>
-                  <span>- Rs. {totalDiscount.toLocaleString()}</span>
+
+              {filteredProducts.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border border-slate-200/80 shadow-xs mt-2">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mb-3">
+                    <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                  </div>
+                  <h3 className="text-base font-bold text-slate-800 mb-1">No products found</h3>
+                  <p className="text-xs text-slate-400 text-center max-w-sm">
+                    Try adjusting your search or category filter to find products.
+                  </p>
                 </div>
               )}
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-slate-600 dark:text-slate-400">Tax</span>
-                <span className="text-slate-700 font-medium dark:text-slate-300">
-                  Rs. {tax.toLocaleString()}
-                </span>
+            </div>
+          </div>
+
+          {/* Right Sidebar - Current Order (Cart) */}
+          <aside className="w-80 bg-white rounded-2xl p-4 shadow-2xs border border-slate-200/90 flex flex-col h-full shrink-0 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shadow-2xs">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 leading-tight">
+                    Current Order
+                  </h2>
+                  {cart.length > 0 && (
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      {cart.reduce((sum, item) => sum + item.quantity, 0)} items
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="h-px bg-gradient-to-r from-transparent via-sky-200 dark:via-slate-700 to-transparent my-3"></div>
-              <div className="flex justify-between items-center">
-                <span className="text-lg font-semibold text-slate-800 dark:text-white">
-                  Total
-                </span>
-                <span className="text-2xl font-bold bg-gradient-to-r from-sky-600 to-blue-600 dark:from-sky-400 dark:to-blue-300 bg-clip-text text-transparent">
+              {cart.length > 0 && (
+                <button
+                  onClick={clearCart}
+                  className="text-xs font-semibold text-red-500 hover:text-red-700 cursor-pointer"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
+
+            {/* Cart Content */}
+            <div className="flex-1 overflow-y-auto py-3 space-y-2.5 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+              {cart.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center py-10">
+                  <div className="w-20 h-20 rounded-full bg-blue-50/80 flex items-center justify-center mb-4">
+                    <svg className="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-base font-bold text-slate-800 mb-1">
+                    No items yet
+                  </h3>
+                  <p className="text-xs text-slate-400 text-center max-w-[200px]">
+                    Add products from the catalog to start an order
+                  </p>
+                </div>
+              ) : (
+                cart.map((item, index) => {
+                  const hasItemOffer =
+                    item.hasActiveOffer ||
+                    (item.offer?.isActive && (item.discountAmount ?? 0) > 0);
+                  const itemImg = resolveProductImage(
+                    products.find((p) => p._id === item._id) || (item as Product)
+                  );
+                  return (
+                    <div
+                      key={
+                        item.serialNumber
+                          ? `${item._id}_${item.serialNumber}`
+                          : `${item._id}_${index}`
+                      }
+                      className="bg-slate-50/80 rounded-2xl p-3 border border-slate-200/70 hover:border-blue-300 transition-all shadow-2xs"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        {/* Thumbnail Image */}
+                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200/80 p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-2xs">
+                          {itemImg ? (
+                            <img
+                              src={itemImg}
+                              alt={item.name || "Product"}
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                const fallbackBase = "https://api.hotlinecellular.lk";
+                                if (target.src && !target.src.includes("hotlinecellular.lk") && target.dataset.triedProduction !== "true") {
+                                  target.dataset.triedProduction = "true";
+                                  const path = target.src.replace(/^https?:\/\/[^\/]+/, "");
+                                  target.src = `${fallbackBase}${path}`;
+                                  return;
+                                }
+                                if (target.dataset.triedCategory !== "true") {
+                                  target.dataset.triedCategory = "true";
+                                  target.src = "https://api.hotlinecellular.lk/uploads/categories/accessories.jpg";
+                                  return;
+                                }
+                                target.style.display = "none";
+                                const next = target.nextElementSibling as HTMLElement;
+                                if (next) next.style.display = "flex";
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            style={{ display: itemImg ? "none" : "flex" }}
+                            className="w-full h-full items-center justify-center text-xs font-bold text-blue-600 bg-blue-50/50 rounded-lg"
+                          >
+                            {(item.name?.[0] || "P").toUpperCase()}
+                          </div>
+                        </div>
+
+                        {/* Title, Badges & Remove Button */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-1">
+                            <h4 className="text-slate-800 font-bold text-xs leading-snug truncate" title={item.name}>
+                              {item.name}
+                            </h4>
+                            <button
+                              onClick={() => removeFromCart(index)}
+                              className="p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer shrink-0 -mt-0.5 -mr-0.5"
+                              title="Remove item"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                          {/* Variant & Serial Badges */}
+                          {(item.variantDisplay || item.serialNumber || hasItemOffer || item.isSimReload) && (
+                            <div className="flex flex-wrap items-center gap-1 mt-1">
+                              {item.variantDisplay && (
+                                <span className="text-[10px] font-semibold text-blue-700 bg-blue-100/70 px-1.5 py-0.5 rounded">
+                                  {item.variantDisplay}
+                                </span>
+                              )}
+                              {item.serialNumber && (
+                                <span className="text-[10px] font-mono font-bold text-sky-800 bg-sky-100/70 px-1.5 py-0.5 rounded">
+                                  IMEI: {item.serialNumber}
+                                </span>
+                              )}
+                              {item.isSimReload && (
+                                <span className="text-[10px] font-semibold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                                  {item.simReloadType === "RELOAD" ? "Reload" : "SIM"}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Price, Discount & Quantity controls */}
+                      <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-200/60">
+                        {/* Quantity Stepper */}
+                        <div className="flex items-center bg-white rounded-lg border border-slate-200/80 p-0.5">
+                          <button
+                            onClick={() =>
+                              updateQuantity(
+                                item._id,
+                                item.quantity - 1,
+                                item.serialNumber,
+                                item.variantId
+                              )
+                            }
+                            className="w-5 h-5 rounded text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all disabled:opacity-30 cursor-pointer"
+                            disabled={!!item.serialNumber || item.quantity <= 1}
+                          >
+                            -
+                          </button>
+                          <span className="w-6 text-center text-xs font-bold text-slate-800">
+                            {item.quantity}
+                          </span>
+                          <button
+                            onClick={() =>
+                              updateQuantity(
+                                item._id,
+                                item.quantity + 1,
+                                item.serialNumber,
+                                item.variantId
+                              )
+                            }
+                            className="w-5 h-5 rounded text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all disabled:opacity-30 cursor-pointer"
+                            disabled={!!item.serialNumber}
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        {/* Inline Discount if permitted */}
+                        {canApplyDiscount && (
+                          <div className="flex items-center gap-0.5 text-[10px] text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded border border-red-200">
+                            <span>Disc:</span>
+                            <input
+                              type="number"
+                              className="w-10 bg-transparent text-right font-bold text-red-700 focus:outline-none"
+                              style={{ color: '#b91c1c' }}
+                              value={item.discountAmount ?? ""}
+                              placeholder="0"
+                              onChange={(e) => {
+                                const newCart = [...cart];
+                                const rawVal = e.target.value;
+                                const val = parseFloat(rawVal);
+                                const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
+                                if (!isNaN(val) && val >= 0) {
+                                  newCart[index].discountAmount = val;
+                                  newCart[index].effectivePrice = Math.max(0, base - val);
+                                  setCart(newCart);
+                                } else if (rawVal === "") {
+                                  // @ts-expect-error
+                                  newCart[index].discountAmount = "";
+                                  newCart[index].effectivePrice = base;
+                                  setCart(newCart);
+                                }
+                              }}
+                            />
+                          </div>
+                        )}
+
+                        {/* Line Total */}
+                        <span className="text-xs font-extrabold text-blue-600">
+                          Rs. {getLineTotal(item).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Cart Footer */}
+            <div className="pt-3.5 border-t border-slate-100 space-y-2 shrink-0">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500 font-medium">Subtotal</span>
+                <span className="text-slate-800 font-bold">Rs. {rawSubtotal.toLocaleString()}</span>
+              </div>
+              {totalDiscount > 0 && (
+                <div className="flex justify-between items-center text-xs text-red-500 font-medium">
+                  <span>Discount</span>
+                  <span className="font-bold">- Rs. {totalDiscount.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500 font-medium">Tax</span>
+                <span className="text-slate-800 font-bold">Rs. {tax.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t border-slate-100">
+                <span className="text-base font-extrabold text-slate-900">Total</span>
+                <span className="text-2xl font-black text-blue-600">
                   Rs. {total.toLocaleString()}
                 </span>
               </div>
-            </div>
 
-            {/* Pay Button */}
-            <button
-              onClick={() => setShowPaymentModal(true)}
-              disabled={cart.length === 0}
-              className={`w-full py-4 rounded-xl font-bold text-base transition-all duration-300 flex items-center justify-center gap-2 ${ cart.length === 0 ? "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-500 cursor-not-allowed" : "bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-white shadow-lg shadow-sky-500/25 hover:shadow-sky-500/40 hover:scale-[1.02] active:scale-[0.98]" }`}
-            >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+              {/* Primary Pay Button */}
+              <button
+                onClick={() => setShowPaymentModal(true)}
+                disabled={cart.length === 0}
+                className={`w-full py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-2xs ${
+                  cart.length === 0
+                    ? "bg-blue-600 text-white opacity-90 cursor-not-allowed shadow-none"
+                    : "bg-blue-600 hover:bg-blue-700 text-white active:scale-[0.99]"
+                }`}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"
-                />
-              </svg>
-              {cart.length === 0 ? "Add Items to Pay" : "Proceed to Payment"}
-            </button>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <span>{cart.length === 0 ? "Add Items to Pay" : "Proceed to Payment"}</span>
+              </button>
 
-            {/* Keyboard Shortcut Hint */}
-            {cart.length > 0 && (
-              <p className="text-center text-[10px] text-slate-500 mt-2 dark:text-slate-400">
-                Press{" "}
-                <kbd className="px-1.5 py-0.5 bg-sky-100 dark:bg-slate-800 rounded text-sky-700 dark:text-sky-300 font-mono border border-transparent dark:border-slate-700">
-                  F2
-                </kbd>{" "}
-                for quick checkout
-              </p>
-            )}
-          </div>
+              {/* Secondary Action Button */}
+              <button
+                onClick={() => {
+                  if (cart.length > 0) setShowPaymentModal(true);
+                }}
+                disabled={cart.length === 0}
+                className="w-full py-2.5 rounded-lg font-semibold text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+                <span>Add Items to Pay</span>
+              </button>
+            </div>
+          </aside>
         </div>
       </div>
 
@@ -2745,6 +2613,7 @@ export default function POS(): JSX.Element {
           onSuccess={() => {
             clearCart();
             setShowPaymentModal(false);
+            productVariantsCache.clear();
             fetchData();
           }}
         />
@@ -2843,11 +2712,13 @@ export default function POS(): JSX.Element {
           initialVariantId={pendingVariantId}
           initialSerialNumber={pendingSerialNumber}
           cart={cart}
+          isLoading={isVariantModalLoading}
           onClose={() => {
             setShowVariantModal(false);
             setPendingProduct(null);
             setPendingVariantId(undefined);
             setPendingSerialNumber(undefined);
+            setIsVariantModalLoading(false);
           }}
           onSelectVariant={(variant, serialNumber, stockItemId, stockItemPrice) => {
             setShowVariantModal(false);
@@ -2855,210 +2726,12 @@ export default function POS(): JSX.Element {
             setPendingProduct(null);
             setPendingVariantId(undefined);
             setPendingSerialNumber(undefined);
+            setIsVariantModalLoading(false);
           }}
         />
       )}
 
-      {/* Serial Number Modal for Warranty Products */}
-      {showSerialModal && pendingProduct && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 2000,
-          }}
-          // onClick={() => {
-          //   setShowSerialModal(false);
-          //   setPendingProduct(null);
-          // }}
-        >
-          {/* Modal Container */}
-          <div
-            style={{
-              background: "linear-gradient(145deg, #1e1e2f 0%, #2a2a4a 100%)",
-              borderRadius: 16,
-              padding: 24,
-              width: 400,
-              maxWidth: "90%",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-              border: "1px solid rgba(255,255,255,0.1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div style={{ textAlign: "center", marginBottom: 20, position: "relative" }}>
-              <button
-                onClick={() => {
-                  setShowSerialModal(false);
-                  setPendingProduct(null);
-                }}
-                style={{
-                  position: "absolute",
-                  top: -10,
-                  right: -10,
-                  background: "transparent",
-                  border: "none",
-                  color: "rgba(255,255,255,0.6)",
-                  cursor: "pointer",
-                }}
-              >
-                <svg className="w-6 h-6 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-              <div
-                style={{
-                  width: 60,
-                  height: 60,
-                  borderRadius: "50%",
-                  background:
-                    "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  margin: "0 auto 12px",
-                }}
-              >
-                <span style={{ fontSize: 28 }}>📱</span>
-              </div>
-              <h3 style={{ color: "#fff", margin: 0, fontSize: 18 }}>
-                Enter {serialInputType}
-              </h3>
-              <p
-                style={{
-                  color: "rgba(255,255,255,0.6)",
-                  margin: "8px 0 0",
-                  fontSize: 13,
-                }}
-              >
-                This product has warranty. Enter the {serialInputType} for tracking.
-              </p>
-            </div>
 
-            {/* Product Info */}
-            <div
-              style={{
-                background: "rgba(255,255,255,0.05)",
-                borderRadius: 8,
-                padding: 12,
-                marginBottom: 16,
-              }}
-            >
-              <div style={{ color: "#fff", fontWeight: 600, marginBottom: 4 }}>
-                {pendingProduct.name}
-              </div>
-              <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13 }}>
-                SKU: {pendingProduct.sku || "N/A"} | Warranty:{" "}
-                {pendingProduct.warrantyDuration} months
-              </div>
-            </div>
-
-            {/* Input Type Selection */}
-            <select
-              value={serialInputType}
-              onChange={(e) => setSerialInputType(e.target.value as "IMEI" | "Serial")}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: 8,
-                border: "1px solid rgba(255,255,255,0.2)",
-                background: "rgba(255,255,255,0.05)",
-                color: "#fff",
-                fontSize: 14,
-                outline: "none",
-                marginBottom: 12,
-              }}
-              className="bg-slate-800 text-white"
-            >
-              <option value="IMEI" style={{ background: "#1e293b", color: "#ffffff" }}>IMEI</option>
-              <option value="Serial" style={{ background: "#1e293b", color: "#ffffff" }}>Serial Number</option>
-            </select>
-
-            {/* Serial Number Input */}
-            <div style={{ position: "relative", marginBottom: 16 }}>
-              <input
-                type="text"
-                value={serialNumberInput}
-                onChange={(e) => setSerialNumberInput(e.target.value)}
-                placeholder={`Scan or enter ${serialInputType}`}
-                autoFocus
-                style={{
-                  width: "100%",
-                  padding: "14px 40px 14px 16px",
-                  borderRadius: 8,
-                  border: "2px solid rgba(16, 185, 129, 0.3)",
-                  background: "rgba(255,255,255,0.05)",
-                  color: "#fff",
-                  fontSize: 16,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  letterSpacing: 1,
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleSerialNumberConfirm();
-                  }
-                }}
-              />
-              <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.5)" }}>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm14 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                </svg>
-              </div>
-            </div>
-
-            {/* Buttons */}
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                onClick={() => {
-                  addToCart(pendingProduct, undefined, undefined, undefined, undefined, true);
-                  setShowSerialModal(false);
-                  setPendingProduct(null);
-                  setSerialNumberInput("");
-                }}
-                style={{
-                  flex: 1,
-                  padding: "12px 16px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "transparent",
-                  color: "rgba(255,255,255,0.7)",
-                  fontSize: 14,
-                  cursor: "pointer",
-                }}
-              >
-                Skip (No {serialInputType})
-              </button>
-              <button
-                onClick={handleSerialNumberConfirm}
-                style={{
-                  flex: 2,
-                  padding: "12px 16px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: serialNumberInput.trim()
-                    ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
-                    : "rgba(255,255,255,0.1)",
-                  color: serialNumberInput.trim()
-                    ? "#fff"
-                    : "rgba(255,255,255,0.5)",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: serialNumberInput.trim() ? "pointer" : "not-allowed",
-                }}
-                disabled={!serialNumberInput.trim()}
-              >
-                ✓ Add to Cart
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Returns Panel */}
       {showReturnsPanel && (

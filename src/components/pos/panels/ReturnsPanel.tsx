@@ -214,15 +214,32 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 dark:bg-slate-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl w-full max-w-4xl border border-sky-200/50 shadow-2xl overflow-hidden min-h-[550px] max-h-[95vh] flex flex-col rounded-2xl">
-        <div className="p-4 border-b border-sky-200/50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl flex items-center justify-between">
-          <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2 dark:text-white">
-            ↩️ Process Return / Exchange
-          </h3>
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl w-full max-w-4xl border border-slate-800/80 shadow-2xl overflow-hidden min-h-[550px] max-h-[95vh] flex flex-col text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+              ↩️
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                  Process Return / Exchange
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  RETURNS
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                Lookup original invoice and process refund or exchange credit
+              </p>
+            </div>
+          </div>
           <button
             onClick={onClose}
-            className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors dark:text-slate-400"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
           >
             ✕
           </button>

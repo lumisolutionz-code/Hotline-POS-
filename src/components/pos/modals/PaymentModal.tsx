@@ -191,56 +191,39 @@ export function PaymentModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50 p-2 sm:p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg max-h-[96vh] flex flex-col border border-slate-200/80 dark:border-slate-800 shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="relative overflow-hidden bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200/80 dark:border-slate-700/80 shrink-0">
-          <div className="absolute inset-0 bg-gradient-to-r from-sky-500/10 via-blue-500/5 to-sky-500/10 pointer-events-none"></div>
-          <div className="relative px-5 py-3.5 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-md shadow-sky-500/30 text-white shrink-0">
-                <svg
-                  className="w-4.5 h-4.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 leading-tight">
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-2 sm:p-4 animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[96vh] flex flex-col border border-slate-800/80 shadow-2xl overflow-hidden text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
                   Complete Payment
                 </h3>
-                <p className="text-slate-500 text-xs dark:text-slate-400">
-                  {cart.length} items in order
-                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  CHECKOUT
+                </span>
               </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                {cart.length} item(s) in order • Total: Rs. {total.toLocaleString()}
+              </p>
             </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 bg-white/80 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-500/20 rounded-lg text-slate-400 hover:text-red-500 dark:text-slate-400 dark:hover:text-red-400 transition-all border border-slate-200/80 dark:border-slate-700 cursor-pointer"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
           </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
         {/* Scrollable / Flexible Form Content */}
@@ -273,7 +256,7 @@ export function PaymentModal({
                     Item Discount
                   </span>
                   <span className="font-semibold">
-                    - Rs. {totalItemDiscount.toLocaleString()}
+                    Rs. - {totalItemDiscount.toLocaleString()}
                   </span>
                 </div>
               )}
@@ -411,8 +394,8 @@ export function PaymentModal({
                     onClick={() => setPaymentMethod(method)}
                     className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                       paymentMethod === method
-                        ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md shadow-sky-500/25 border border-sky-400 dark:border-sky-500"
-                        : "bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200/80 dark:border-slate-700"
+                        ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
+                        : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                     }`}
                   >
                     <span className="text-sm">{icon}</span>
@@ -425,7 +408,7 @@ export function PaymentModal({
             {/* Print Documents (Bill / Invoice) */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                   Print Documents
                 </label>
               </div>
@@ -435,15 +418,15 @@ export function PaymentModal({
                   onClick={() => setPrintBill(!printBill)}
                   className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1 cursor-pointer ${
                     printBill
-                      ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md shadow-sky-500/25 border border-sky-400 dark:border-sky-500"
-                      : "bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200/80 dark:border-slate-700"
+                      ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
+                      : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
                   <span className="text-sm">🧾</span>
                   <span className="text-xs font-semibold flex items-center gap-0.5">
                     Bill
                     {printBill && (
-                      <span className="text-[10px] bg-white/25 dark:bg-white/20 px-1 rounded-full font-bold">
+                      <span className="text-[10px] bg-white/25 px-1 rounded-full font-bold">
                         ✓
                       </span>
                     )}
@@ -454,15 +437,15 @@ export function PaymentModal({
                   onClick={() => setPrintInvoice(!printInvoice)}
                   className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1 cursor-pointer ${
                     printInvoice
-                      ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md shadow-sky-500/25 border border-sky-400 dark:border-sky-500"
-                      : "bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200/80 dark:border-slate-700"
+                      ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
+                      : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
                   <span className="text-sm">📑</span>
                   <span className="text-xs font-semibold flex items-center gap-0.5">
                     Invoice
                     {printInvoice && (
-                      <span className="text-[10px] bg-white/25 dark:bg-white/20 px-1 rounded-full font-bold">
+                      <span className="text-[10px] bg-white/25 px-1 rounded-full font-bold">
                         ✓
                       </span>
                     )}
@@ -556,7 +539,7 @@ export function PaymentModal({
         </div>
 
         {/* Action Buttons Footer (Pinned at bottom, always visible with no scrolling) */}
-        <div className="p-4 bg-slate-50/90 dark:bg-slate-800/90 border-t border-slate-200/80 dark:border-slate-700/80 grid grid-cols-2 gap-3 shrink-0">
+        <div className="px-6 py-4 bg-white border-t border-slate-100 grid grid-cols-2 gap-3 shrink-0">
           <button
             type="button"
             onClick={() => handlePayment(false)}
@@ -565,11 +548,11 @@ export function PaymentModal({
               (paymentMethod === "CASH" &&
                 parseFloat(amountReceived || "0") < total)
             }
-            className="py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed border border-slate-200 dark:border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
+            className="py-2.5 px-4 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
           >
             {loading ? (
               <>
-                <div className="w-4 h-4 border-2 border-slate-400/30 border-t-slate-800 dark:border-t-white rounded-full animate-spin"></div>
+                <div className="w-4 h-4 border-2 border-slate-400/30 border-t-slate-800 rounded-full animate-spin"></div>
                 Processing...
               </>
             ) : (
@@ -599,7 +582,7 @@ export function PaymentModal({
               (paymentMethod === "CASH" &&
                 parseFloat(amountReceived || "0") < total)
             }
-            className="py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-sky-500/25 hover:shadow-sky-500/40 flex items-center justify-center gap-2 cursor-pointer text-sm"
+            className="py-2.5 px-6 bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer text-sm"
           >
             {loading ? (
               <>

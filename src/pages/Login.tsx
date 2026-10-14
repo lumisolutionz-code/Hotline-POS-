@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { PERMISSIONS } from "../constants/permission";
 import logo from "../assets/logo.png";
-const API_URL = import.meta.env.VITE_API_URL as string;
+const API_URL = (import.meta.env.VITE_API_URL as string) || "https://api.hotlinecellular.lk/api/v1";
 
 export default function Login(): JSX.Element {
   const [username, setUsername] = useState("");

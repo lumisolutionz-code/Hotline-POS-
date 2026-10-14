@@ -73,6 +73,7 @@ export interface Product {
     endDate?: string;
   };
   variants?: ProductVariant[];
+  stockItems?: any[];
 }
 
 export interface CartItem extends Product {

@@ -9463,7 +9463,7 @@ process.env.VITE_PUBLIC = Wr ? pt.join(process.env.APP_ROOT, "public") : Xu;
 let ve;
 function Ku() {
   ve = new Sl({
-    icon: pt.join(process.env.VITE_PUBLIC, "favicon.ico"),
+    icon: pt.join(process.env.VITE_PUBLIC, "icon.ico"),
     webPreferences: {
       preload: pt.join(zu, "preload.mjs")
     }

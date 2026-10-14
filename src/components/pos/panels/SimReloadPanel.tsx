@@ -289,30 +289,27 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-800/80 overflow-hidden">
         {/* Header */}
-        <div className="relative overflow-hidden bg-slate-50 dark:bg-slate-800/90 border-b border-slate-200 dark:border-slate-700/80 p-4 shrink-0">
+        <div className="bg-[#0f172a] text-white px-6 py-4 border-b border-slate-800 shrink-0">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
-                <Radio className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-lg font-bold text-white tracking-wide">
                   SIM Cards & Mobile Reload
-                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                    POS Service
-                  </span>
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Select SIM cards, top up airtime & view full transaction log
-                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  SERVICES
+                </span>
               </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                Select SIM cards, top up airtime & view transaction history
+              </p>
             </div>
 
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-700/60 rounded-xl transition-colors cursor-pointer"
+              className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -324,11 +321,11 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
               onClick={() => setActiveTab("SIM")}
               className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 activeTab === "SIM"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30 ring-2 ring-indigo-400/30"
-                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700"
+                  ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-400/40"
+                  : "bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/70"
               }`}
             >
-              <Smartphone className="w-4 h-4" />
+              <Smartphone className="w-3.5 h-3.5" />
               <span>SIM Cards</span>
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20">
                 {sims.length}
@@ -339,11 +336,11 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
               onClick={() => setActiveTab("RELOAD")}
               className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 activeTab === "RELOAD"
-                  ? "bg-amber-600 text-white shadow-md shadow-amber-600/30 ring-2 ring-amber-400/30"
-                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700"
+                  ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-400/40"
+                  : "bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/70"
               }`}
             >
-              <Zap className="w-4 h-4" />
+              <Zap className="w-3.5 h-3.5" />
               <span>Mobile Reload</span>
             </button>
 
@@ -351,12 +348,12 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
               onClick={() => setActiveTab("HISTORY")}
               className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 activeTab === "HISTORY"
-                  ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-400/30"
-                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700"
+                  ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-400/40"
+                  : "bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/70"
               }`}
             >
-              <History className="w-4 h-4" />
-              <span>Records & History Table</span>
+              <History className="w-3.5 h-3.5" />
+              <span>Records & History</span>
             </button>
           </div>
         </div>
@@ -800,24 +797,28 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
 
       {/* Register New SIM Sub-Modal */}
       {showAddSimModal && (
-        <div className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
-              <h3 className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2">
-                <Smartphone className="w-4 h-4 text-indigo-500" />
-                Register New SIM Card
-              </h3>
+        <div className="fixed inset-0 z-[60] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md border border-slate-800/80 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="bg-[#0f172a] text-white px-5 py-3.5 flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-white text-sm">
+                  Register New SIM Card
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  NEW
+                </span>
+              </div>
               <button
                 onClick={() => setShowAddSimModal(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-lg transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateSim} className="space-y-3.5">
+            <form onSubmit={handleCreateSim} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
                   SIM Name *
                 </label>
                 <input
@@ -825,20 +826,20 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                   placeholder="e.g. Dialog 4G Pre-Paid SIM"
                   value={newSimName}
                   onChange={(e) => setNewSimName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-indigo-500 dark:text-white"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white transition-all"
                   required
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
                   Network / Provider *
                 </label>
                 <select
                   value={newSimProvider}
                   onChange={(e) => setNewSimProvider(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-indigo-500 dark:text-white"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white transition-all"
                 >
                   <option value="Dialog">Dialog</option>
                   <option value="Mobitel">Mobitel</option>
@@ -851,7 +852,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
                     Selling Price (Rs.) *
                   </label>
                   <input
@@ -859,12 +860,12 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                     placeholder="200"
                     value={newSimPrice}
                     onChange={(e) => setNewSimPrice(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-indigo-500 dark:text-white"
+                    className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white font-mono font-bold transition-all"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
                     Cost Price (Rs.)
                   </label>
                   <input
@@ -872,23 +873,23 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                     placeholder="150"
                     value={newSimCost}
                     onChange={(e) => setNewSimCost(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-indigo-500 dark:text-white"
+                    className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white font-mono transition-all"
                   />
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddSimModal(false)}
-                  className="flex-1 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 rounded-xl"
+                  className="flex-1 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmittingSim || !newSimName.trim() || !newSimPrice}
-                  className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5"
+                  className="flex-1 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmittingSim && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Save & Register</span>

@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+@layer base {
+  body, button, input, select, textarea {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
 /* Dark mode native form control styles */
 :root.dark,
 html.dark,
@@ -13,7 +21,24 @@ html.dark,
 .dark input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
 .dark textarea {
   color-scheme: dark;
-  color: #f8fafc !important;
+  color: #f8fafc;
+}
+
+/* Light / White inputs should keep dark text even if .dark class is on an ancestor */
+.dark input.bg-white,
+.dark input[class*="bg-white"],
+.dark input[class*="bg-slate-50"],
+.dark textarea.bg-white,
+.dark select.bg-white,
+.bg-white input:not([class*="dark:bg-slate"]),
+.bg-slate-50 input:not([class*="dark:bg-slate"]) {
+  color: #0f172a !important;
+  color-scheme: light !important;
+}
+
+.dark input.bg-white::placeholder,
+.dark input[class*="bg-white"]::placeholder {
+  color: #94a3b8 !important;
 }
 
 .dark select option,
@@ -31,7 +56,7 @@ html.dark,
 
 .dark input::placeholder,
 .dark textarea::placeholder {
-  color: #94a3b8 !important;
+  color: #94a3b8;
 }
 
 /* Custom Scrollbar Styles */

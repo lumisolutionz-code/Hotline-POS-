@@ -6,19 +6,42 @@ export function ProductDetailModal({
   onAddToCart,
 }: ProductDetailModalProps): JSX.Element {
   const resolveProductImage = (p: Product): string | null => {
-    let img = p.images?.[0];
+    let img = (p.images && p.images.length > 0 && p.images[0]) ? p.images[0] : (p as any).image || (p as any).thumbnail;
     if (!img && p.variants && Array.isArray(p.variants)) {
       for (const v of p.variants) {
         if (v.images && v.images.length > 0 && v.images[0]) {
           img = v.images[0];
           break;
         }
+        if ((v as any).image) {
+          img = (v as any).image;
+          break;
+        }
+      }
+    }
+    if (!img) {
+      if (typeof p.category === "object" && (p.category as any)?.image) {
+        img = (p.category as any).image;
+      } else {
+        const catName = String((typeof p.category === "object" ? p.category?.name : "") || "").toLowerCase();
+        const prodName = (p.name || "").toLowerCase();
+        if (catName.includes("audio") || prodName.includes("airpod") || prodName.includes("earbud") || prodName.includes("headset") || prodName.includes("speaker")) {
+          img = "/uploads/categories/audio.jpg";
+        } else if (catName.includes("phone") || prodName.includes("phone") || prodName.includes("galaxy") || prodName.includes("iphone") || prodName.includes("redmi") || prodName.includes("nokia")) {
+          img = "/uploads/categories/mobile_phones.jpg";
+        } else if (catName.includes("charger") || catName.includes("power") || catName.includes("cable") || prodName.includes("cable") || prodName.includes("charger") || prodName.includes("adapter")) {
+          img = "/uploads/categories/chargers_power.jpg";
+        } else if (catName.includes("repair") || catName.includes("battery") || prodName.includes("battery") || prodName.includes("display") || prodName.includes("screen")) {
+          img = "/uploads/categories/repair_parts.jpg";
+        } else {
+          img = "/uploads/categories/accessories.jpg";
+        }
       }
     }
     if (!img) return null;
     if (img.startsWith("http://") || img.startsWith("https://") || img.startsWith("data:")) return img;
     const cleanPath = img.startsWith("/") ? img : `/${img}`;
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, '') : 'http://localhost:5000');
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/api\/v1\/?$/, "") : "https://api.hotlinecellular.lk");
     return `${apiBase}${cleanPath}`;
   };
 
@@ -77,41 +100,55 @@ export function ProductDetailModal({
   const productImg = resolveProductImage(product);
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-lg border border-slate-200/80 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="p-5 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between">
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl w-full max-w-lg border border-slate-800/80 shadow-2xl overflow-hidden flex flex-col text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-3">
             {productImg ? (
               <img
                 src={productImg}
                 alt={product.name || "Product"}
-                className="w-12 h-12 rounded-2xl object-cover border border-slate-200 dark:border-slate-700 shrink-0 bg-white"
+                className="w-11 h-11 rounded-xl object-cover border border-slate-700 shrink-0 bg-slate-800"
                 onError={(e) => {
-                  (e.target as HTMLElement).style.display = "none";
-                  const next = (e.target as HTMLElement).nextElementSibling as HTMLElement;
+                  const target = e.currentTarget;
+                  const fallbackBase = "https://api.hotlinecellular.lk";
+                  if (target.src && !target.src.includes("hotlinecellular.lk") && target.dataset.triedFallback !== "true") {
+                    target.dataset.triedFallback = "true";
+                    const path = target.src.replace(/^https?:\/\/[^\/]+/, "");
+                    target.src = `${fallbackBase}${path}`;
+                    return;
+                  }
+                  target.style.display = "none";
+                  const next = target.nextElementSibling as HTMLElement;
                   if (next) next.style.display = "flex";
                 }}
               />
             ) : null}
             <div
               style={{ display: productImg ? "none" : "flex" }}
-              className="w-12 h-12 rounded-2xl bg-sky-100 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/60 flex items-center justify-center text-xl font-extrabold shrink-0"
+              className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shrink-0 shadow-md"
             >
               {(product?.name?.[0] || "P").toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="text-base font-extrabold text-slate-800 dark:text-slate-100 leading-snug truncate">
-                {product?.name || "Unknown Product"}
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5 truncate">
-                {product?.sku || "No SKU"}
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug truncate">
+                  {product?.name || "Product Details"}
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60 shrink-0">
+                  PRODUCT DETAILS
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5 truncate">
+                {product?.sku || "SKU: N/A"} • {product?.category?.name || "Uncategorized"}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700/80 transition-all shrink-0 cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
           >
             <svg
               className="w-5 h-5"
@@ -282,26 +319,26 @@ export function ProductDetailModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 border-t border-slate-200/80 dark:border-slate-800 flex gap-3 bg-slate-50/50 dark:bg-slate-900/50">
+        <div className="px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-between gap-3 shrink-0">
           <button
             onClick={onClose}
-            className="flex-1 py-3 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl font-bold text-sm border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+            className="border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-xl px-5 py-2.5 font-semibold text-sm transition-colors cursor-pointer"
           >
             Close
           </button>
           <button
             onClick={() => onAddToCart(product)}
             disabled={isOutOfStock}
-            className={`flex-1 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+            className={`py-2.5 px-6 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer ${
               isOutOfStock
-                ? "bg-slate-100 dark:bg-slate-800/80 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700"
-                : "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/25 transition-all cursor-pointer"
+                ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                : "bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white"
             }`}
           >
             {isOutOfStock ? (
               <>
                 <svg
-                  className="w-5 h-5"
+                  className="w-4 h-4"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -318,7 +355,7 @@ export function ProductDetailModal({
             ) : (
               <>
                 <svg
-                  className="w-5 h-5"
+                  className="w-4 h-4"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -326,7 +363,7 @@ export function ProductDetailModal({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2}
+                    strokeWidth={2.5}
                     d="M12 6v6m0 0v6m0-6h6m-6 0H6"
                   />
                 </svg>

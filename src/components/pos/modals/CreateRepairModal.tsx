@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { X, Loader2, Save, Barcode, Plus, Trash2, Search, Database, Check } from "lucide-react";
+import { X, Loader2, Save, Barcode, Plus, Trash2, Search, Database, Check, Wrench } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
 import { api } from "../../../lib/api";
 
@@ -524,13 +524,32 @@ export function CreateRepairModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-xl font-bold text-slate-800 dark:text-white">Create Repair Job</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl border border-slate-800/80 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+              <Wrench className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                  Create Repair Job
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  NEW JOB
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                Register customer device, diagnostic details and service cost
+              </p>
+            </div>
+          </div>
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors dark:hover:bg-slate-800"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1017,11 +1036,11 @@ export function CreateRepairModal({
           </form>
         </div>
 
-        <div className="p-6 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-800/50">
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-white shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-medium transition-colors dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:hover:bg-slate-600"
+            className="border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-xl px-5 py-2.5 font-semibold text-sm transition-colors cursor-pointer"
           >
             Cancel
           </button>
@@ -1029,9 +1048,9 @@ export function CreateRepairModal({
             type="submit"
             form="create-repair-form"
             disabled={loading}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+            className="px-6 py-2.5 bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white rounded-xl font-bold shadow-xs transition-colors flex items-center gap-2 disabled:opacity-50 text-sm cursor-pointer"
           >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Save Repair Job
           </button>
         </div>
@@ -1039,16 +1058,23 @@ export function CreateRepairModal({
       
       {/* Search DB Modal */}
       {searchModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col border border-slate-200 dark:border-slate-800">
-            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50 shrink-0 rounded-t-2xl">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col border border-slate-800/80 overflow-hidden text-slate-800">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-[#0f172a] text-white shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-sm">
-                  <Search className="w-5 h-5" />
+                <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md">
+                  <Search className="w-4 h-4" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-800 dark:text-white">Search Repair Supplies</h3>
+                <div>
+                  <h3 className="text-base font-bold text-white">Search Repair Supplies</h3>
+                  <p className="text-xs text-slate-400 font-mono">Select replacement part from inventory</p>
+                </div>
               </div>
-              <button type="button" onClick={() => setSearchModalOpen(false)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors dark:hover:bg-slate-800">
+              <button
+                type="button"
+                onClick={() => setSearchModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>

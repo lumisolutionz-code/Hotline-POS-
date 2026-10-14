@@ -91,22 +91,34 @@ export function WarrantyPanel({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 dark:bg-slate-950/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl w-full max-w-2xl min-h-[500px] max-h-[90vh] overflow-hidden border border-sky-200/50 shadow-2xl flex flex-col rounded-3xl">
-        <div className="p-5 border-b border-sky-200/50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 dark:text-white">
-              🛡️ Warranty Lookup
-            </h2>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-red-50 rounded-xl text-slate-500 hover:text-red-500 transition-all dark:text-slate-400"
-            >
-              ✕
-            </button>
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-2xl min-h-[500px] max-h-[90vh] overflow-hidden border border-slate-800/80 shadow-2xl flex flex-col rounded-2xl">
+        {/* Header */}
+        <div className="bg-[#0f172a] text-white px-6 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-lg font-bold text-white tracking-wide">
+                Warranty Lookup
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                WARRANTY
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">
+              Search and verify customer device warranties
+            </p>
           </div>
-          
-          <div className="mt-4 flex gap-2 relative">
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-colors cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Search Bar */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+          <div className="flex gap-2 relative">
             <input
               type="text"
               value={searchSaleNumber}
@@ -118,19 +130,19 @@ export function WarrantyPanel({
               onFocus={() => { if (searchResults.length > 0 && warranties.length === 0) setShowDropdown(true); }}
               onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
               placeholder="Enter Sale Number (e.g., SL-20231015-0001)..."
-              className="flex-1 px-4 py-3 bg-white border border-sky-200/50 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 shadow-sm dark:bg-slate-800 dark:text-white"
+              className="flex-1 px-4 py-2.5 bg-white dark:bg-slate-800 border-2 border-blue-500 rounded-xl text-slate-800 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm font-mono"
             />
             <button
               onClick={() => searchWarranties()}
               disabled={loading || !searchSaleNumber.trim()}
-              className="px-6 py-3 bg-gradient-to-r from-sky-500 to-blue-500 text-white font-semibold rounded-xl hover:from-sky-600 hover:to-blue-600 disabled:opacity-50 transition-all shadow-md"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl disabled:opacity-50 transition-all shadow-sm flex items-center justify-center cursor-pointer"
             >
-              {loading ? "..." : "🔍 Search"}
+              {loading ? "Searching..." : "Search"}
             </button>
 
             {/* Autocomplete Dropdown */}
             {showDropdown && searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-32 mt-1 bg-white dark:bg-slate-800 border border-sky-200/50 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto">
+              <div className="absolute top-full left-0 right-28 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto">
                 {searchResults.map((result) => (
                   <div
                     key={result._id}
@@ -138,10 +150,10 @@ export function WarrantyPanel({
                       e.preventDefault();
                       searchWarranties(result.saleNumber);
                     }}
-                    className="p-3 border-b border-slate-100 dark:border-slate-700 hover:bg-sky-50 dark:hover:bg-slate-700 cursor-pointer transition-colors"
+                    className="p-3 border-b border-slate-100 dark:border-slate-700 hover:bg-blue-50/60 dark:hover:bg-slate-700 cursor-pointer transition-colors"
                   >
                     <div className="flex justify-between items-center mb-1">
-                      <span className="font-mono text-sm text-sky-600 dark:text-sky-400 font-bold">{result.saleNumber}</span>
+                      <span className="font-mono text-sm text-blue-600 dark:text-blue-400 font-bold">{result.saleNumber}</span>
                       <span className="text-xs text-slate-500 dark:text-slate-400">{new Date(result.createdAt).toLocaleDateString()}</span>
                     </div>
                     <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300">
@@ -187,72 +199,72 @@ export function WarrantyPanel({
               return (
                 <div
                   key={warranty._id}
-                  className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-2xl p-4 border border-sky-200/50 hover:border-sky-300 hover:shadow-xl hover:shadow-sky-500/10 transition-all shadow-sm"
+                  className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-all shadow-sm"
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div>
                       <span className="text-xs text-slate-500 font-mono dark:text-slate-400">
                         {warranty.warrantyNumber}
                       </span>
-                      <h3 className="text-lg font-semibold text-slate-800 dark:text-white">
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
                         {warranty.product?.name ||
                           warranty.productName ||
                           "Unknown Product"}
                       </h3>
                       {warranty.serialNumber && (
-                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                        <p className="text-xs text-slate-500 font-mono dark:text-slate-400 mt-0.5">
                           SN: {warranty.serialNumber}
                         </p>
                       )}
                     </div>
                     <span
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border ${getStatusColor(warranty.status)}`}
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${getStatusColor(warranty.status)}`}
                     >
                       {warranty.status}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                  <div className="grid grid-cols-2 gap-2 text-xs mb-3.5 bg-slate-50 dark:bg-slate-850 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/60">
                     <div>
-                      <span className="text-slate-500 dark:text-slate-400">Customer:</span>
-                      <span className="text-slate-800 ml-2 dark:text-white">
+                      <span className="text-slate-400 dark:text-slate-400">Customer:</span>
+                      <span className="text-slate-800 ml-1.5 font-medium dark:text-white">
                         {warranty.customer?.name || "N/A"}
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-500 dark:text-slate-400">Phone:</span>
-                      <span className="text-slate-800 ml-2 dark:text-white">
+                      <span className="text-slate-400 dark:text-slate-400">Phone:</span>
+                      <span className="text-slate-800 ml-1.5 font-medium dark:text-white">
                         {warranty.customer?.phone || "N/A"}
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-500 dark:text-slate-400">Type:</span>
-                      <span className="text-sky-600 ml-2">
+                      <span className="text-slate-400 dark:text-slate-400">Type:</span>
+                      <span className="text-blue-600 ml-1.5 font-semibold">
                         {warranty.warrantyType}
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-500 dark:text-slate-400">Expires:</span>
+                      <span className="text-slate-400 dark:text-slate-400">Expires:</span>
                       <span
-                        className={`ml-2 ${daysRemaining > 0 ? "text-emerald-400" : "text-red-400"}`}
+                        className={`ml-1.5 font-medium ${daysRemaining > 0 ? "text-emerald-500" : "text-rose-500"}`}
                       >
                         {new Date(warranty.endDate).toLocaleDateString()}
-                        {daysRemaining > 0 && ` (${daysRemaining} days left)`}
+                        {daysRemaining > 0 && ` (${daysRemaining}d left)`}
                       </span>
                     </div>
                   </div>
 
                   {claimsCount > 0 && (
                     <div className="mb-3 p-2 bg-amber-50 rounded-lg border border-amber-200">
-                      <span className="text-amber-600 text-xs font-semibold">
+                      <span className="text-amber-700 text-xs font-semibold">
                         {claimsCount} of {maxClaims} claim(s) on record
                       </span>
                     </div>
                   )}
 
                   {hasReachedClaimLimit && (
-                    <div className="mb-3 p-2 bg-red-50 rounded-lg border border-red-200">
-                      <span className="text-red-600 text-xs font-semibold">
+                    <div className="mb-3 p-2 bg-rose-50 rounded-lg border border-rose-200">
+                      <span className="text-rose-600 text-xs font-semibold">
                         Claim limit reached ({maxClaims}/{maxClaims})
                       </span>
                     </div>
@@ -261,9 +273,9 @@ export function WarrantyPanel({
                   {canCreateClaim && canClaimNow && (
                     <button
                       onClick={() => onCreateClaim(warranty)}
-                      className="w-full py-2 bg-gradient-to-r from-sky-500 to-blue-500 text-white font-semibold rounded-xl hover:from-sky-600 hover:to-blue-600 transition-all shadow-md"
+                      className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      📋 Create Claim
+                      <span>Create Warranty Claim</span>
                     </button>
                   )}
                 </div>

@@ -7,11 +7,13 @@
 
 export interface ShopSettings {
   shopName: string;
+  regNo?: string;
   address: string;
   phone: string;
   email: string;
   footerMessage: string;
   barcodeEnabled: boolean;
+  usePreprintedPaper?: boolean;
 }
 
 export interface ScannerDevice {
@@ -39,11 +41,13 @@ export interface KeyboardShortcuts {
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   shopName: "New Challenge (Pvt) Ltd",
+  regNo: "PV 00301591",
   address: "No 27, Katuwana Road, Homagama",
   phone: "0777309726 / 0777476279",
   email: "hotlinephoneshop@gmail.com",
   footerMessage: "Thank you for shopping at Hotline Cellular! Official Warranty Included.",
   barcodeEnabled: true,
+  usePreprintedPaper: true,
 };
 
 export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcuts = {

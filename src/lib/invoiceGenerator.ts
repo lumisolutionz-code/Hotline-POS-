@@ -1,5 +1,5 @@
 import { ShopSettings, getShopSettings } from "./settings";
-import { HOTLINE_LOGO_DATA_URL } from "./logo";
+import { HOTLINE_LOGO_DATA_URL, HOTLINE_THERMAL_LOGO_DATA_URL } from "./logo";
 
 export interface InvoiceItem {
   description: string;
@@ -18,6 +18,7 @@ export interface InvoiceDetails {
   billFrom: {
     name: string;
     companyName: string;
+    regNo?: string;
     streetAddress: string;
     cityZip: string;
     phone: string;
@@ -29,6 +30,8 @@ export interface InvoiceDetails {
     streetAddress?: string;
     cityZip?: string;
     phone?: string;
+    email?: string;
+    deviceInfo?: string;
   };
   items: InvoiceItem[];
   subtotal: number;
@@ -41,125 +44,213 @@ export interface InvoiceDetails {
   amountPaid?: number;
   balanceDue?: number;
   terms?: string;
+  warranty?: string;
+  isPreprintedPaper?: boolean;
 }
 
 /**
  * Generate standard A4 printable Invoice HTML matching the user's structured template
  */
 export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
-  const minRows = 5;
+  const isPreprinted = inv.isPreprintedPaper !== undefined ? inv.isPreprintedPaper : true;
+  const minRows = isPreprinted ? 4 : 5;
   const currentRowsCount = inv.items.length;
   const emptyRowsCount = Math.max(0, minRows - currentRowsCount);
+
+  // Bill From shop info (placed in Header)
+  const shopName = inv.billFrom?.companyName || inv.billFrom?.name || "Hotline Cellular";
+  const shopRegNo = inv.billFrom?.regNo || "PV 00301591";
+  const shopAddress = inv.billFrom?.streetAddress || "No 27, Katuwana Road, Homagama";
+  const shopCity = inv.billFrom?.cityZip || "Western Province, Sri Lanka";
+  const shopPhone = inv.billFrom?.phone || "0777309726 / 0777476279";
+  const shopEmail = inv.billFrom?.email || "hotlinephoneshop@gmail.com";
+
+  // Bill To customer info
+  const custName = inv.billTo?.name || "Valued Customer";
+  const custPhone = inv.billTo?.phone && inv.billTo.phone !== "—" && inv.billTo.phone !== "N/A" ? inv.billTo.phone : undefined;
+  const custEmail = inv.billTo?.email && inv.billTo.email !== "-" ? inv.billTo.email : undefined;
+  const custAddress = inv.billTo?.streetAddress && inv.billTo.streetAddress !== "-" ? inv.billTo.streetAddress : (inv.billTo?.cityZip && inv.billTo.cityZip !== "-" && inv.billTo.cityZip !== "Sri Lanka" ? inv.billTo.cityZip : undefined);
+  const custDevice = inv.billTo?.deviceInfo;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>${inv.invoiceTitle || "INVOICE"} - ${inv.invoiceNumber}</title>
-  <style>
+  <style id="page-style">
     @page {
       size: A4 portrait;
-      margin: 8mm 12mm;
+      margin: ${isPreprinted ? "55mm 15mm 54mm 15mm" : "10mm 15mm 12mm 15mm"};
     }
+  </style>
+  <style>
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
     html, body {
-      height: 100%;
-    }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      color: #111827;
       background: #ffffff;
+      color: #111827;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       font-size: 11px;
       line-height: 1.35;
-      padding: 14px 20px;
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-      box-sizing: border-box;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body {
+      padding: 0;
+      margin: 0;
     }
     .invoice-container {
+      width: 100%;
       max-width: 800px;
-      width: 100%;
       margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      flex: 1 0 auto;
-      min-height: calc(100vh - 28px);
       box-sizing: border-box;
+      padding: 10px 15px;
     }
-    .invoice-main-content {
-      flex: 1 0 auto;
+
+    /* Screen Control Bar (Never Printed) */
+    .screen-control-bar {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid #2563eb;
+      font-size: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
-    .invoice-bottom-section {
-      margin-top: auto;
-      flex-shrink: 0;
-      width: 100%;
-      page-break-inside: avoid;
-      break-inside: avoid;
+    .mode-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      user-select: none;
     }
-    /* Top Header Bar */
+    .mode-checkbox {
+      width: 16px;
+      height: 16px;
+      accent-color: #2563eb;
+      cursor: pointer;
+    }
+    .print-btn {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .print-btn:hover {
+      background: #1d4ed8;
+    }
+
+    /* Pre-printed stationery suppression */
+    body.is-preprinted .stationery-element {
+      display: none !important;
+      visibility: hidden !important;
+    }
+    /* On-screen preview spacing matching physical A4 paper clearance */
+    body.is-preprinted .invoice-container {
+      padding-top: 55mm;
+      padding-bottom: 54mm;
+    }
+
+    /* HEADER ROW (Relocated Bill From into Header) */
     .header-row {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       margin-bottom: 12px;
-      padding-bottom: 6px;
+      padding-bottom: 8px;
       border-bottom: 2px solid #0f172a;
     }
     .brand-logo-wrap {
       display: flex;
       align-items: center;
+      gap: 12px;
     }
     .brand-logo-img {
-      height: 50px;
-      max-width: 180px;
+      height: 48px;
+      max-width: 160px;
       object-fit: contain;
       display: block;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+    }
+    .brand-bill-from {
+      display: flex;
+      flex-direction: column;
+    }
+    .brand-company-title {
+      font-size: 15px;
+      font-weight: 900;
+      color: #0f172a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      line-height: 1.1;
+    }
+    .brand-address-line {
+      font-size: 9.5px;
+      color: #475569;
+      font-weight: 600;
+      margin-top: 1px;
+    }
+    .brand-contact-line {
+      font-size: 9.5px;
+      color: #1e40af;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+
+    .header-doc-details {
+      text-align: right;
     }
     .doc-title-text {
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 900;
-      text-align: right;
       color: #0f172a;
       letter-spacing: 1px;
       text-transform: uppercase;
     }
     .doc-sub-text {
-      font-size: 10px;
+      font-size: 9.5px;
       color: #64748b;
       font-weight: 600;
-      text-align: right;
     }
 
-    /* 3-Column Info Area */
+    /* 2-COLUMN METADATA GRID (Bill To on left, Invoice Details on right) */
     .meta-grid {
       display: grid;
-      grid-template-columns: 1.2fr 1.2fr 1.1fr;
-      gap: 12px;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 18px;
       margin-bottom: 12px;
+    }
+    .meta-col {
+      background: #ffffff;
     }
     .meta-col h3 {
       font-size: 11px;
       font-weight: 800;
-      text-transform: capitalize;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       color: #0f172a;
-      margin-bottom: 4px;
-      padding-bottom: 2px;
-      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 6px;
+      padding-bottom: 3px;
+      border-bottom: 1.5px solid #0f172a;
     }
     .meta-field {
       display: flex;
       font-size: 11px;
       margin-bottom: 3px;
+      line-height: 1.35;
     }
     .meta-label {
-      width: 85px;
+      width: 90px;
       color: #475569;
       font-weight: 600;
       flex-shrink: 0;
@@ -172,6 +263,7 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
     }
     .meta-val.strong {
       font-weight: 700;
+      color: #0f172a;
     }
 
     /* Standard Grid Table */
@@ -185,60 +277,50 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
       table-layout: fixed;
     }
     table.invoice-table th {
-      background-color: #4a6785;
+      background-color: #334155;
       color: #ffffff;
       font-weight: 700;
-      font-size: 10.5px;
+      font-size: 10px;
       padding: 5px 8px;
       border: 1px solid #334155;
-      text-transform: capitalize;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
     }
     table.invoice-table td {
-      border: 1px solid #334155;
-      padding: 4px 8px;
+      border: 1px solid #cbd5e1;
+      padding: 5px 8px;
       font-size: 10.5px;
       color: #1e293b;
-      height: 22px;
       vertical-align: middle;
     }
-    .col-desc {
-      width: 52%;
-      text-align: left;
-    }
-    .col-qty {
-      width: 16%;
-      text-align: center;
-    }
-    .col-price {
-      width: 16%;
-      text-align: right;
-    }
-    .col-total {
-      width: 16%;
-      text-align: right;
-    }
+    .col-desc { width: 52%; text-align: left; }
+    .col-qty { width: 14%; text-align: center; }
+    .col-price { width: 17%; text-align: right; }
+    .col-total { width: 17%; text-align: right; }
+
     .empty-row td {
       color: transparent;
       user-select: none;
+      height: 22px;
     }
 
     /* Summary Block */
     .summary-wrap {
       display: flex;
       justify-content: flex-end;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     table.summary-table {
-      width: 32%;
+      width: 40%;
+      min-width: 240px;
       border-collapse: collapse;
       border: 1px solid #334155;
-      table-layout: fixed;
     }
     table.summary-table td {
-      border: 1px solid #334155;
+      border: 1px solid #cbd5e1;
       padding: 4px 8px;
       font-size: 10.5px;
-      height: 22px;
+      height: 21px;
       vertical-align: middle;
     }
     .sum-label {
@@ -252,107 +334,129 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
       text-align: right;
       width: 50%;
     }
-    .sum-val.grand-total {
+    .sum-val.grand-total, .sum-label.grand-total {
       font-size: 12px;
       font-weight: 900;
       color: #0f172a;
       background: #f1f5f9;
-    }
-    .sum-label.grand-total {
-      font-size: 11px;
-      font-weight: 800;
-      color: #0f172a;
-      background: #f1f5f9;
+      border-top: 2px solid #0f172a;
+      border-bottom: 2px solid #0f172a;
     }
 
-    /* Terms and Conditions */
-    .terms-section {
+    /* Bottom Section: Terms & Conditions and Footer Bar */
+    .invoice-bottom-section {
+      page-break-inside: avoid;
+      break-inside: avoid;
       margin-top: 10px;
+    }
+    .footer-divider-row {
+      width: 100%;
+      height: 2px;
+      background: #0f172a;
+      position: relative;
+      margin-bottom: 8px;
+    }
+    .footer-divider-row::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 140px;
+      height: 2px;
+      background: #1e40af;
+    }
+    .terms-section {
       text-align: center;
       padding: 6px 10px;
       border-top: 1px dashed #cbd5e1;
+      margin-bottom: 8px;
     }
     .terms-title {
       font-weight: 800;
       text-decoration: underline;
       margin-bottom: 3px;
-      font-size: 10.5px;
+      font-size: 10px;
       color: #0f172a;
     }
     .terms-text {
-      font-size: 9px;
+      font-size: 8.5px;
       color: #475569;
       max-width: 620px;
       margin: 0 auto;
       line-height: 1.35;
     }
 
-    /* Bottom Page & Watermark */
+    /* Signatures Row */
+    .signatures-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 8px;
+      padding: 0 10px;
+    }
+    .sig-box {
+      width: 44%;
+      text-align: center;
+    }
+    .sig-space {
+      height: 32px;
+    }
+    .sig-line {
+      border-bottom: 1.5px dashed #94a3b8;
+      height: 1px;
+      margin-bottom: 5px;
+    }
+    .sig-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: #1e293b;
+      text-transform: capitalize;
+    }
+    .sig-sub {
+      font-size: 7.5px;
+      color: #64748b;
+    }
+
     .footer-bar {
-      margin-top: 10px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 9.5px;
+      font-size: 9px;
       color: #64748b;
       padding-top: 6px;
       border-top: 1px dashed #cbd5e1;
     }
     .footer-seal {
-      display: flex;
-      align-items: center;
-      gap: 6px;
       font-weight: 800;
       color: #0f172a;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
 
     @media print {
+      .no-print {
+        display: none !important;
+      }
       html, body {
         padding: 0 !important;
         margin: 0 !important;
         background: #ffffff !important;
-        height: 100% !important;
-        min-height: 100% !important;
+        height: auto !important;
+        min-height: auto !important;
       }
       .invoice-container {
         max-width: 100% !important;
         width: 100% !important;
-        margin: 0 auto !important;
-        min-height: 270mm !important;
-        display: flex !important;
-        flex-direction: column !important;
-        page-break-inside: avoid !important;
-      }
-      .invoice-main-content {
-        flex: 1 0 auto !important;
-      }
-      .invoice-bottom-section {
-        margin-top: auto !important;
-        flex-shrink: 0 !important;
-        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
         page-break-inside: avoid !important;
         break-inside: avoid !important;
       }
-      .no-print {
+      body.is-preprinted .stationery-element {
         display: none !important;
-      }
-      .pre-printed {
-        visibility: visible !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
-      .footer-bar {
-        display: flex !important;
-        visibility: visible !important;
-      }
-      .footer-seal {
-        display: flex !important;
-        visibility: visible !important;
+        visibility: hidden !important;
       }
       table.invoice-table th {
-        background-color: #4a6785 !important;
+        background-color: #334155 !important;
+        color: #ffffff !important;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
@@ -363,92 +467,111 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
       }
     }
   </style>
+  <script>
+    function togglePreprinted(cb) {
+      const pageStyle = document.getElementById('page-style');
+      if (cb.checked) {
+        document.body.classList.add('is-preprinted');
+        if (pageStyle) {
+          pageStyle.innerHTML = '@page { size: A4 portrait; margin: 55mm 15mm 54mm 15mm; }';
+        }
+      } else {
+        document.body.classList.remove('is-preprinted');
+        if (pageStyle) {
+          pageStyle.innerHTML = '@page { size: A4 portrait; margin: 10mm 15mm 12mm 15mm; }';
+        }
+      }
+    }
+  </script>
 </head>
-<body>
+<body class="${isPreprinted ? "is-preprinted" : ""}">
+  <!-- Screen Control Bar -->
+  <div class="no-print screen-control-bar">
+    <label class="mode-label">
+      <input
+        type="checkbox"
+        class="mode-checkbox"
+        ${isPreprinted ? "checked" : ""}
+        onchange="togglePreprinted(this)"
+      />
+      <span>Pre-printed Stationery Mode (Suppresses Header/Footer for Pre-printed Color Paper)</span>
+    </label>
+    <button class="print-btn" onclick="window.print()">Print Invoice</button>
+  </div>
+
   <div class="invoice-container">
-    <div class="invoice-main-content">
-      <!-- Header Row -->
-      <div class="header-row">
+    <!-- Header Row (Stationery Element: Relocated Bill From Details) -->
+    <div class="stationery-element header-row">
       <div class="brand-logo-wrap">
-        <img class="brand-logo-img" src="${inv.logoUrl || HOTLINE_LOGO_DATA_URL}" alt="${escapeHtml(inv.billFrom.companyName || "Hotline Cellular")}" />
+        <img class="brand-logo-img" src="${inv.logoUrl || HOTLINE_LOGO_DATA_URL}" alt="${escapeHtml(shopName)}" />
+        <div class="brand-bill-from">
+          <div class="brand-company-title">${escapeHtml(shopName)}</div>
+          <div class="brand-address-line">${escapeHtml(shopAddress)}, ${escapeHtml(shopCity)}</div>
+          <div class="brand-contact-line">Hotlines: ${escapeHtml(shopPhone)} | Reg No: ${escapeHtml(shopRegNo)}</div>
+          <div class="brand-address-line" style="font-size: 8.5px; color: #475569;">${escapeHtml(shopEmail)}</div>
+        </div>
       </div>
-      <div>
+      <div class="header-doc-details">
         <div class="doc-title-text">${inv.invoiceTitle || "INVOICE"}</div>
         <div class="doc-sub-text">Original Customer Copy</div>
       </div>
     </div>
 
-    <!-- Metadata 3-Column Info -->
+    <!-- 2-Column Metadata Info: Bill To (Left) & Invoice Details (Right) -->
     <div class="meta-grid">
-      <!-- Bill From -->
-      <div class="meta-col">
-        <h3>Bill From</h3>
-        <div class="meta-field">
-          <span class="meta-label">Name:</span>
-          <span class="meta-val strong">${inv.billFrom.name || inv.billFrom.companyName || "Hotline Cellular"}</span>
-        </div>
-        <div class="meta-field">
-          <span class="meta-label">Company:</span>
-          <span class="meta-val">${inv.billFrom.companyName}</span>
-        </div>
-        <div class="meta-field">
-          <span class="meta-label">Street Address:</span>
-          <span class="meta-val">${inv.billFrom.streetAddress}</span>
-        </div>
-        <div class="meta-field">
-          <span class="meta-label">City, ZIP:</span>
-          <span class="meta-val">${inv.billFrom.cityZip}</span>
-        </div>
-        <div class="meta-field">
-          <span class="meta-label">Phone:</span>
-          <span class="meta-val">${inv.billFrom.phone}</span>
-        </div>
-      </div>
-
-      <!-- Bill To -->
+      <!-- Bill To Column -->
       <div class="meta-col">
         <h3>Bill To</h3>
         <div class="meta-field">
-          <span class="meta-label">Name:</span>
-          <span class="meta-val strong">${inv.billTo.name || "Valued Customer"}</span>
+          <span class="meta-label">Customer Name:</span>
+          <span class="meta-val strong">${escapeHtml(custName)}</span>
         </div>
+        ${custPhone ? `
         <div class="meta-field">
-          <span class="meta-label">Company:</span>
-          <span class="meta-val">${inv.billTo.companyName || "Retail Client"}</span>
-        </div>
+          <span class="meta-label">Contact No:</span>
+          <span class="meta-val">${escapeHtml(custPhone)}</span>
+        </div>` : ""}
+        ${custEmail ? `
         <div class="meta-field">
-          <span class="meta-label">Street Address:</span>
-          <span class="meta-val">${inv.billTo.streetAddress || "Storefront / Counter"}</span>
-        </div>
+          <span class="meta-label">Email:</span>
+          <span class="meta-val">${escapeHtml(custEmail)}</span>
+        </div>` : ""}
+        ${custAddress ? `
         <div class="meta-field">
-          <span class="meta-label">City, ZIP:</span>
-          <span class="meta-val">${inv.billTo.cityZip || "Western Province, Sri Lanka"}</span>
-        </div>
+          <span class="meta-label">Address:</span>
+          <span class="meta-val">${escapeHtml(custAddress)}</span>
+        </div>` : ""}
+        ${custDevice ? `
         <div class="meta-field">
-          <span class="meta-label">Phone:</span>
-          <span class="meta-val">${inv.billTo.phone || "—"}</span>
-        </div>
+          <span class="meta-label">Device Info:</span>
+          <span class="meta-val strong" style="color: #0284c7;">${escapeHtml(custDevice)}</span>
+        </div>` : ""}
       </div>
 
-      <!-- Invoice Details (Right) -->
+      <!-- Invoice Details Column -->
       <div class="meta-col">
         <h3>Invoice Details</h3>
         <div class="meta-field">
           <span class="meta-label">Invoice No:</span>
-          <span class="meta-val strong">${inv.invoiceNumber}</span>
+          <span class="meta-val strong">${escapeHtml(inv.invoiceNumber)}</span>
         </div>
         <div class="meta-field">
           <span class="meta-label">Invoice Date:</span>
-          <span class="meta-val">${inv.invoiceDate}</span>
+          <span class="meta-val">${escapeHtml(inv.invoiceDate)}</span>
         </div>
         <div class="meta-field">
-          <span class="meta-label">Due Date:</span>
-          <span class="meta-val">${inv.dueDate || "Paid on Purchase"}</span>
+          <span class="meta-label">Status / Due:</span>
+          <span class="meta-val">${escapeHtml(inv.dueDate || "Paid on Purchase")}</span>
         </div>
         <div class="meta-field">
           <span class="meta-label">Payment:</span>
-          <span class="meta-val">${inv.paymentMethod || "CASH"}</span>
+          <span class="meta-val">${escapeHtml(inv.paymentMethod || "CASH")}</span>
         </div>
+        ${inv.warranty ? `
+        <div class="meta-field">
+          <span class="meta-label">Warranty:</span>
+          <span class="meta-val strong" style="color: #0284c7;">${escapeHtml(inv.warranty)}</span>
+        </div>` : ""}
       </div>
     </div>
 
@@ -458,8 +581,8 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
         <thead>
           <tr>
             <th class="col-desc">Description</th>
-            <th class="col-qty">Quantity / Hours</th>
-            <th class="col-price">Price (Rs.)</th>
+            <th class="col-qty">Quantity</th>
+            <th class="col-price">Unit Price (Rs.)</th>
             <th class="col-total">Total (Rs.)</th>
           </tr>
         </thead>
@@ -500,7 +623,7 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
             inv.discount && inv.discount > 0
               ? `<tr>
             <td class="sum-label">Discount</td>
-            <td class="sum-val" style="color: #e11d48; font-weight: 600;">-Rs. ${inv.discount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="sum-val" style="color: #e11d48; font-weight: 600;">Rs. - ${inv.discount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>`
               : ""
           }
@@ -512,20 +635,24 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
           </tr>`
               : inv.taxOrDiscount
               ? `<tr>
-            <td class="sum-label">${inv.taxOrDiscountLabel || "Sales Tax"}</td>
-            <td class="sum-val">${inv.taxOrDiscount < 0 ? "-Rs. " + Math.abs(inv.taxOrDiscount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Rs. " + inv.taxOrDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="sum-label">${escapeHtml(inv.taxOrDiscountLabel || "Sales Tax")}</td>
+            <td class="sum-val">${inv.taxOrDiscount < 0 ? "Rs. - " + Math.abs(inv.taxOrDiscount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Rs. " + inv.taxOrDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>`
               : `<tr>
             <td class="sum-label">Sales Tax</td>
             <td class="sum-val">Rs. 0.00</td>
           </tr>`
           }
-          <tr>
+          ${
+            inv.otherCharges && inv.otherCharges > 0
+              ? `<tr>
             <td class="sum-label">Other</td>
-            <td class="sum-val">Rs. ${(inv.otherCharges || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>
+            <td class="sum-val">Rs. ${inv.otherCharges.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>`
+              : ""
+          }
           <tr>
-            <td class="sum-label grand-total">Total</td>
+            <td class="sum-label grand-total">Grand Total</td>
             <td class="sum-val grand-total">Rs. ${inv.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           ${
@@ -548,16 +675,35 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
       </table>
     </div>
 
-    <!-- Bottom Section: Terms & Conditions and Footer Bar -->
-    <div class="invoice-bottom-section">
+    <!-- Bottom Section: Terms & Conditions and Footer Bar (Stationery Element) -->
+    <div class="stationery-element invoice-bottom-section">
+      <!-- Footer Divider Line Matching Header Divider Line -->
+      <div class="footer-divider-row"></div>
+
       <!-- Terms & Conditions -->
       <div class="terms-section">
-        <div class="terms-title">Terms and Conditions</div>
+        <div class="terms-title">Terms & Conditions / Warranty Notice</div>
         <div class="terms-text">
           ${
             inv.terms ||
-            `Thank you for your business. Please inspect your device and items upon receipt. All eligible phones, accessories, and repairs carry official warranty from ${escapeHtml(inv.billFrom.companyName || "Hotline Cellular")} as per stated coverage terms. Please retain this original invoice for warranty and claim validation.`
+            `Thank you for your business. Please inspect your device and items upon receipt. All eligible phones, accessories, and repairs carry official warranty from ${escapeHtml(shopName)} as per stated coverage terms. Please retain this original invoice for warranty and claim validation.`
           }
+        </div>
+      </div>
+
+      <!-- Signatures Row with Spacious Height -->
+      <div class="signatures-row">
+        <div class="sig-box">
+          <div class="sig-space"></div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Customer Signature & Acceptance</div>
+          <div class="sig-sub">Received items in satisfactory order</div>
+        </div>
+        <div class="sig-box">
+          <div class="sig-space"></div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized Signatory & Seal</div>
+          <div class="sig-sub">Hotline Cellular • Homagama</div>
         </div>
       </div>
 
@@ -566,7 +712,7 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
         <div class="footer-seal">
           &copy; Powered by Lumisolutionz
         </div>
-        <div>Page 1 of 1</div>
+        <div>Hotline Cellular • Original Invoice</div>
       </div>
     </div>
   </div>
@@ -583,17 +729,40 @@ export function generateSaleInvoiceHtml(
   customerName?: string,
   customerPhone?: string,
   customerEmail?: string,
+  isPreprintedPaper?: boolean,
 ): string {
   const settings = shopSettings || getShopSettings();
   const saleNumber = sale.saleNumber || `SAL-${Date.now().toString().slice(-6)}`;
   const dateStr = sale.createdAt ? new Date(sale.createdAt).toLocaleDateString() : new Date().toLocaleDateString();
 
-  const items: InvoiceItem[] = (sale.items || []).map((it: any) => ({
-    description: it.productName || it.name || "Item",
-    quantity: it.quantity || 1,
-    unitPrice: Number(it.unitPrice || 0),
-    total: Number(it.total || (Number(it.unitPrice || 0) * (it.quantity || 1))),
-  }));
+  const hasMobile = hasMobilePhoneSale(sale);
+  const warrantyText = hasMobile ? getSaleWarrantyText(sale) : "";
+
+  const items: InvoiceItem[] = (sale.items || []).map((it: any) => {
+    let desc = it.productName || it.name || "Item";
+    const imei = it.imei1 || it.imei;
+    const imei2 = it.imei2;
+    const serial = it.serialNumber || it.serial;
+    const isMobile = isMobilePhoneItem(it);
+
+    if (imei) {
+      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">IMEI: ${escapeHtml(imei)}${imei2 ? ` / ${escapeHtml(imei2)}` : ""}</span>`;
+    } else if (serial) {
+      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">S/N: ${escapeHtml(serial)}</span>`;
+    }
+
+    if (isMobile) {
+      const itWarranty = getItemWarrantyText(it) || "1 Year Warranty";
+      desc += `<br/><span style="font-size: 10px; color: #1e40af; font-weight: 700;">Warranty: ${escapeHtml(itWarranty)}</span>`;
+    }
+
+    return {
+      description: desc,
+      quantity: it.quantity || 1,
+      unitPrice: Number(it.unitPrice || 0),
+      total: Number(it.total || (Number(it.unitPrice || 0) * (it.quantity || 1))),
+    };
+  });
 
   const subtotal = Number(sale.subtotal || sale.grandTotal || 0);
   const discount = Number(sale.discountTotal || 0);
@@ -604,26 +773,32 @@ export function generateSaleInvoiceHtml(
 
   const custEmail = customerEmail || sale.customer?.email;
 
+  const usePreprinted = isPreprintedPaper !== undefined
+    ? isPreprintedPaper
+    : (settings.usePreprintedPaper !== undefined ? settings.usePreprintedPaper : true);
+
   const invDetails: InvoiceDetails = {
     invoiceTitle: "SALES INVOICE",
     invoiceNumber: saleNumber,
     invoiceDate: dateStr,
     dueDate: "Paid in Full",
     paymentMethod: sale.paymentMethod || "CASH",
+    warranty: hasMobile ? (warrantyText || "1 Year Warranty") : undefined,
+    isPreprintedPaper: usePreprinted,
     billFrom: {
       name: settings.shopName || "Hotline Cellular",
       companyName: settings.shopName || "Hotline Cellular",
+      regNo: settings.regNo || "PV 00301591",
       streetAddress: settings.address || "No 27, Katuwana Road, Homagama",
-      cityZip: "Homagama, Western Province, Sri Lanka",
+      cityZip: "Western Province, Sri Lanka",
       phone: settings.phone || "0777309726 / 0777476279",
       email: settings.email || "hotlinephoneshop@gmail.com",
     },
     billTo: {
-      name: customerName?.trim() || (sale.customer?.name && sale.customer?.name !== "Walk-in Customer" ? sale.customer.name : "-"),
-      companyName: customerPhone?.trim() ? `Phone: ${customerPhone.trim()}` : (sale.customer?.phone && sale.customer?.phone !== "N/A" ? `Phone: ${sale.customer.phone}` : "Phone: -"),
-      streetAddress: custEmail ? `Email: ${custEmail}` : "-",
-      cityZip: "Sri Lanka",
-      phone: customerPhone?.trim() || (sale.customer?.phone && sale.customer?.phone !== "N/A" ? sale.customer.phone : "-"),
+      name: customerName?.trim() || (sale.customer?.name && sale.customer?.name !== "Walk-in Customer" ? sale.customer.name : "Walk-in Customer"),
+      phone: customerPhone?.trim() || (sale.customer?.phone && sale.customer?.phone !== "N/A" ? sale.customer.phone : undefined),
+      email: custEmail?.trim() && custEmail !== "-" ? custEmail.trim() : undefined,
+      streetAddress: sale.customer?.address?.trim() && sale.customer?.address !== "-" ? sale.customer.address.trim() : undefined,
     },
     items,
     subtotal,
@@ -633,8 +808,9 @@ export function generateSaleInvoiceHtml(
     total: grandTotal,
     amountPaid,
     balanceDue: changeGiven,
-    terms:
-      "Thank you for purchasing from Hotline Cellular. All genuine brand smartphones and accessories include manufacturer warranty where specified. Please retain this invoice for any service or warranty claims.",
+    terms: hasMobile
+      ? `Thank you for purchasing from Hotline Cellular. All genuine brand mobile phones include ${escapeHtml(warrantyText || "1 Year Warranty")}. Please retain this invoice for any service or warranty claims.`
+      : "Thank you for purchasing from Hotline Cellular. Please inspect all items upon receipt. Retain this original invoice for your records.",
   };
 
   return generateInvoiceHtmlFromDetails(invDetails);
@@ -651,6 +827,7 @@ export function generateRepairInvoiceHtml(
   balanceDue?: number,
   amountReceived?: string | number,
   change?: number,
+  isPreprintedPaper?: boolean,
 ): string {
   const settings = shopSettings || getShopSettings();
   const dateStr = new Date().toLocaleDateString();
@@ -696,26 +873,37 @@ export function generateRepairInvoiceHtml(
   const bal = balanceDue !== undefined ? balanceDue : Math.max(0, grandTotal - adv);
   const paid = amountReceived ? Number(amountReceived) : grandTotal;
 
+  const usePreprinted = isPreprintedPaper !== undefined
+    ? isPreprintedPaper
+    : (settings.usePreprintedPaper !== undefined ? settings.usePreprintedPaper : true);
+
+  const deviceBrand = repair.device?.brand || "";
+  const deviceModel = repair.device?.model || "Device";
+  const deviceImei = repair.device?.imei || repair.device?.serialNumber;
+  const deviceInfoStr = `${deviceBrand} ${deviceModel}${deviceImei ? ` (IMEI: ${deviceImei})` : ""}`;
+
   const invDetails: InvoiceDetails = {
     invoiceTitle: "DEVICE REPAIR INVOICE",
     invoiceNumber: jobNumber,
     invoiceDate: dateStr,
     dueDate: "Paid Upon Collection",
     paymentMethod: repair.paymentMethod || "CASH",
+    isPreprintedPaper: usePreprinted,
     billFrom: {
       name: settings.shopName || "Hotline Cellular",
       companyName: `${settings.shopName || "Hotline Cellular"} Service Centre`,
+      regNo: settings.regNo || "PV 00301591",
       streetAddress: settings.address || "No 27, Katuwana Road, Homagama",
-      cityZip: "Homagama, Western Province, Sri Lanka",
+      cityZip: "Western Province, Sri Lanka",
       phone: settings.phone || "0777309726 / 0777476279",
       email: settings.email || "hotlinephoneshop@gmail.com",
     },
     billTo: {
-      name: repair.customer?.name || "Customer",
-      companyName: `Device: ${repair.device?.brand || ""} ${repair.device?.model || ""}`,
-      streetAddress: repair.device?.imei ? `IMEI: ${repair.device.imei}` : "Colombo, Sri Lanka",
-      cityZip: "Western Province, Sri Lanka",
-      phone: repair.customer?.phone || "—",
+      name: repair.customer?.name || "Valued Customer",
+      phone: repair.customer?.phone && repair.customer?.phone !== "—" ? repair.customer.phone : undefined,
+      email: repair.customer?.email || undefined,
+      deviceInfo: deviceInfoStr,
+      streetAddress: repair.customer?.address || undefined,
     },
     items,
     subtotal: grandTotal,
@@ -794,57 +982,71 @@ export function isPhoneSale(sale: any): boolean {
 }
 
 /**
- * Detect whether an item is specifically a smart phone (excludes button phones and accessories)
+ * Detect whether an item is specifically in the Mobile Phones category
  */
-export function isSmartPhoneItem(item: any): boolean {
+export function isMobilePhoneItem(item: any): boolean {
   if (!item) return false;
   const name = String(item.productName || item.name || "").toLowerCase();
-  const cat = String(item.category?.name || item.categoryName || item.product?.category?.name || "").toLowerCase();
+  const rawCat = item.category?.name || item.categoryName || item.product?.category?.name || item.product?.category || item.category || item.mainCategory || "";
+  const cat = (typeof rawCat === "string" ? rawCat : String(rawCat?.name || "")).toLowerCase();
 
-  // 1. Definite accessory / non-smartphone keywords exclusion
-  const accessoryPattern = /\b(cover|case|cable|charger|adapter|glass|tempered|pouch|holder|earphone|earbuds|headset|headphone|airpod|air\s*pods|speaker|battery|batteries|sim|reload|watch|smart\s*watch|mouse|power\s*bank|lens|aux)\b/i;
+  // 1. Definite accessory / non-phone keywords exclusion
+  const accessoryPattern = /\b(cover|case|cable|charger|adapter|glass|tempered|pouch|holder|earphone|earbuds|headset|headphone|airpod|air\s*pods|speaker|battery|batteries|sim|reload|watch|smart\s*watch|mouse|power\s*bank|lens|aux|screen\s*protector|handsfree|dongle|back\s*cover)\b/i;
   if (accessoryPattern.test(name) || accessoryPattern.test(cat)) {
     return false;
   }
 
-  // 2. Definite button phone / feature phone exclusion
-  const buttonPhonePattern = /\b(button\s*phone|keypad|feature\s*phone|bar\s*phone|we2|bird|bird-lk|laver|greentel|talk\s*premium|nokia\s*(105|106|110|150|216|220|3310|130|5310|6300|6310|800))\b/i;
-  if (buttonPhonePattern.test(name) || buttonPhonePattern.test(cat)) {
-    return false;
-  }
-
-  // 3. Category match
-  if (cat.includes("smart phone") || cat.includes("smartphone")) {
-    return true;
-  }
-  const smartSubcats = ["apple iphone", "redmi", "poco", "oneplus", "honor", "vivo", "oppo", "pixel", "realme"];
-  if (smartSubcats.some(sc => cat.includes(sc))) {
+  // 2. Direct category check for Mobile Phones / Smart Phones
+  if (
+    cat.includes("mobile phone") ||
+    cat.includes("mobile phones") ||
+    cat.includes("smart phone") ||
+    cat.includes("smartphone") ||
+    cat === "mobile" ||
+    cat === "phones"
+  ) {
     return true;
   }
 
-  // 4. Smartphone model / brand patterns in name
-  const smartBrandPattern = /\b(iphone|galaxy|redmi|poco|oneplus|pixel|vivo|oppo|realme|honor\s*[a-z0-9]|huawei|xiaomi|xperia|zenfone)\b/i;
-  if (smartBrandPattern.test(name)) {
+  // 3. Subcategories under mobile phones
+  const phoneSubcats = ["apple iphone", "iphone", "samsung galaxy", "redmi", "poco", "oneplus", "honor", "vivo", "oppo", "pixel", "realme", "nokia", "huawei", "tecno", "infinix"];
+  if (phoneSubcats.some(sc => cat.includes(sc))) {
     return true;
   }
 
-  // 5. IMEI tracked items that are not button phones
+  // 4. IMEI tracked items (in this system IMEI is strictly for mobile phones)
   if (item.trackingType && String(item.trackingType).toUpperCase() === "IMEI") {
-    if (!name.includes("nokia") && !name.includes("button")) {
-      return true;
-    }
+    return true;
+  }
+  if (item.imei1 || item.imei || item.imei2) {
+    return true;
+  }
+
+  // 5. Phone model / brand patterns in name
+  const phoneBrandPattern = /\b(iphone|galaxy|redmi|poco|oneplus|pixel|vivo|oppo|realme|honor\s*[a-z0-9]|huawei|xiaomi|xperia|zenfone)\b/i;
+  if (phoneBrandPattern.test(name)) {
+    return true;
+  }
+
+  // 6. Generic phone name check (e.g. "Test Phone 001")
+  if (/\bphone\b/i.test(name)) {
+    return true;
   }
 
   return false;
 }
 
 /**
- * Detect whether a sale contains any smart phone items
+ * Detect whether a sale contains any items from the Mobile Phones category
  */
-export function hasSmartPhoneSale(sale: any): boolean {
+export function hasMobilePhoneSale(sale: any): boolean {
   if (!sale || !sale.items || !Array.isArray(sale.items) || sale.items.length === 0) return false;
-  return sale.items.some((item: any) => isSmartPhoneItem(item));
+  return sale.items.some((item: any) => isMobilePhoneItem(item));
 }
+
+// Backwards-compatible aliases
+export const isSmartPhoneItem = isMobilePhoneItem;
+export const hasSmartPhoneSale = hasMobilePhoneSale;
 
 export interface DeviceVariants {
   ram?: string;
@@ -983,22 +1185,38 @@ export function formatDurationMonths(months: number): string {
 }
 
 /**
- * Retrieve sale warranty period text
+ * Retrieve warranty text for an individual item, defaulting to "1 Year Warranty"
+ */
+export function getItemWarrantyText(item: any): string {
+  if (!item) return "1 Year Warranty";
+  if (item.warranty && typeof item.warranty === "object") {
+    if (item.warranty.durationMonths) {
+      return formatDurationMonths(Number(item.warranty.durationMonths));
+    }
+    if (item.warranty.description) return String(item.warranty.description);
+  }
+  const dur = item.warrantyDuration ?? item.durationMonths ?? item.product?.warrantyDuration;
+  if (dur !== undefined && dur !== null && Number(dur) > 0) {
+    return formatDurationMonths(Number(dur));
+  }
+  if (item.warrantyDescription) return String(item.warrantyDescription);
+  return "1 Year Warranty";
+}
+
+/**
+ * Retrieve sale warranty period text for mobile phone items, defaulting to "1 Year Warranty"
  */
 export function getSaleWarrantyText(sale: any): string {
   if (sale && sale.items && Array.isArray(sale.items)) {
+    // Check mobile phone items first
     for (const item of sale.items) {
-      if (item.warranty && typeof item.warranty === "object") {
-        if (item.warranty.durationMonths) {
-          return formatDurationMonths(Number(item.warranty.durationMonths));
-        }
-        if (item.warranty.description) return String(item.warranty.description);
+      if (isMobilePhoneItem(item)) {
+        return getItemWarrantyText(item);
       }
-      const dur = item.warrantyDuration ?? item.durationMonths ?? item.product?.warrantyDuration;
-      if (dur !== undefined && dur !== null && Number(dur) > 0) {
-        return formatDurationMonths(Number(dur));
-      }
-      if (item.warrantyDescription) return String(item.warrantyDescription);
+    }
+    for (const item of sale.items) {
+      const txt = getItemWarrantyText(item);
+      if (txt) return txt;
     }
   }
   return "1 Year Warranty";
@@ -1031,7 +1249,8 @@ export function generateSaleBillHtml(
   const custPhone = rawCustPhone && rawCustPhone !== "N/A" ? rawCustPhone : "-";
   const custEmail = rawCustEmail;
 
-  const hasSmartPhone = hasSmartPhoneSale(sale);
+  const hasMobile = hasMobilePhoneSale(sale);
+  const warrantyText = hasMobile ? getSaleWarrantyText(sale) : "";
   const isPhone = isPhoneSale(sale);
 
   const itemsHtml = sale.items && sale.items.length > 0
@@ -1082,7 +1301,7 @@ export function generateSaleBillHtml(
               ${identifierLine ? `<div class="item-identifier">${identifierLine}</div>` : ""}
               <div class="item-subrow">
                 <span class="item-calc">${qty} x Rs. ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                ${calcDisc > 0 ? `<span class="item-disc">Disc: -Rs. ${calcDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` : ""}
+                ${calcDisc > 0 ? `<span class="item-disc">Disc: Rs. - ${calcDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` : ""}
               </div>
             </div>
           `;
@@ -1091,10 +1310,16 @@ export function generateSaleBillHtml(
     : `<div class="item-block"><div class="item-name">No items</div></div>`;
 
   const subtotal = Number(sale.subtotal || 0);
-  const discountTotal = Number(sale.discountTotal || 0);
+  const discountTotal = Number(sale.discountTotal !== undefined ? sale.discountTotal : (sale.discountAmount || 0));
   const taxTotal = Number(sale.tax || sale.taxTotal || 0);
-  const grandTotal = Number(sale.grandTotal || 0);
-  const amountPaid = Number(sale.amountPaid || 0);
+  const grandTotal = Number(sale.grandTotal !== undefined ? sale.grandTotal : (sale.finalTotal !== undefined ? sale.finalTotal : (sale.total || 0)));
+  let amountPaid = Number(sale.amountPaid || 0);
+  if (!amountPaid && Array.isArray(sale.payments) && sale.payments.length > 0) {
+    amountPaid = sale.payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+  }
+  if (!amountPaid && grandTotal > 0) {
+    amountPaid = grandTotal;
+  }
   const changeGiven = Number(sale.changeGiven || 0);
 
   return `<!DOCTYPE html>
@@ -1105,14 +1330,14 @@ export function generateSaleBillHtml(
     <style>
       @page {
         margin: 0;
-        size: 78mm auto;
+        size: 70mm auto;
       }
       * {
         box-sizing: border-box;
       }
       html, body {
-        width: 78mm;
-        max-width: 78mm;
+        width: 70mm;
+        max-width: 70mm;
       }
       body {
         font-family: 'Courier New', Courier, monospace, system-ui, -apple-system, sans-serif;
@@ -1123,15 +1348,15 @@ export function generateSaleBillHtml(
         background: #ffffff;
         margin: 0 auto;
         padding: 5px 2px;
-        width: 78mm;
-        max-width: 78mm;
+        width: 70mm;
+        max-width: 70mm;
         text-align: center;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
       .bill-container {
         width: 100%;
-        max-width: 78mm;
+        max-width: 70mm;
         margin: 0 auto;
         text-align: center;
       }
@@ -1146,18 +1371,45 @@ export function generateSaleBillHtml(
         flex: 1 1 auto;
         min-height: 12mm;
       }
-      /* Top section: extra bold & prominent */
+      /* Top section: extra bold & prominent with Logo */
       .top-section {
         margin-bottom: 2px;
         text-align: center;
       }
+      .thermal-logo-wrap {
+        text-align: center;
+        margin-bottom: 4px;
+      }
+      .thermal-logo {
+        max-width: 52mm;
+        max-height: 25mm;
+        height: auto;
+        display: block;
+        margin: 0 auto;
+        object-fit: contain;
+        filter: grayscale(100%) contrast(150%);
+        -webkit-filter: grayscale(100%) contrast(150%);
+      }
       .shop-name {
-        font-size: 19px;
+        font-size: 18px;
         font-weight: 900;
         letter-spacing: 0.5px;
         text-transform: uppercase;
         margin: 0 0 1px 0;
         line-height: 1.15;
+      }
+      .shop-legal {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        margin: 1px 0;
+      }
+      .shop-reg {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        margin: 1px 0;
       }
       .shop-info {
         font-size: 12px;
@@ -1217,8 +1469,15 @@ export function generateSaleBillHtml(
       }
       .item-block {
         margin-bottom: 5px;
+        padding-bottom: 5px;
+        border-bottom: 1px dashed #000000;
         text-align: left;
         width: 100%;
+      }
+      .item-block:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+        margin-bottom: 1px;
       }
       .item-row {
         display: flex;
@@ -1331,23 +1590,23 @@ export function generateSaleBillHtml(
         letter-spacing: 0.3px;
       }
       .powered-by {
-        margin-top: 5px;
         font-size: 10.5px;
-        font-weight: 900;
-        letter-spacing: 0.5px;
+        font-weight: 800;
+        letter-spacing: 0.3px;
         text-align: center;
-        text-transform: uppercase;
+        padding: 2px 0;
+        margin: 1px 0;
       }
       @media print {
         html, body {
-          width: 78mm !important;
-          max-width: 78mm !important;
+          width: 70mm !important;
+          max-width: 70mm !important;
           margin: 0 auto !important;
           padding: 0 !important;
         }
         .bill-container {
-          width: 78mm !important;
-          max-width: 78mm !important;
+          width: 70mm !important;
+          max-width: 70mm !important;
         }
         .bill-container.phone-bill {
           min-height: 175mm !important;
@@ -1359,9 +1618,14 @@ export function generateSaleBillHtml(
   <body>
     <div class="bill-container ${isPhone ? "phone-bill" : ""}">
       <div class="top-section">
-        <div class="shop-name">${escapeHtml(shopName)}</div>
+        <div class="thermal-logo-wrap">
+          <img class="thermal-logo" src="${HOTLINE_THERMAL_LOGO_DATA_URL}" alt="Hotline Cellular" />
+        </div>
+        <div class="shop-name">HOTLINE CELLULAR</div>
+        <div class="shop-legal">${escapeHtml(shopName)}</div>
+        <div class="shop-reg">Reg No: ${escapeHtml(settings.regNo || "PV 00301591")}</div>
         <div class="shop-info">${escapeHtml(address)}</div>
-        <div class="shop-info">Phone: ${escapeHtml(phone)}</div>
+        <div class="shop-info">Hotlines: ${escapeHtml(phone)}</div>
         ${email ? `<div class="shop-info">Email: ${escapeHtml(email)}</div>` : ""}
       </div>
 
@@ -1394,7 +1658,7 @@ export function generateSaleBillHtml(
         ${discountTotal > 0 ? `
         <div class="total-line">
           <span class="total-label">Discount:</span>
-          <span class="total-val">-Rs. ${discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          <span class="total-val">Rs. - ${discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>` : ""}
         ${taxTotal > 0 ? `
         <div class="total-line">
@@ -1427,13 +1691,13 @@ export function generateSaleBillHtml(
       <div class="footer-section">
         <div class="footer-line">Thank you for shopping at</div>
         <div class="footer-line footer-brand">Hotline Cellular</div>
-        ${hasSmartPhone ? `
-        <div class="footer-line">Official Warranty Included</div>
-        <div class="footer-line footer-warranty">1 Year Warranty</div>
+        ${hasMobile ? `
+        <div class="footer-line footer-warranty">${escapeHtml(warrantyText || "1 Year Warranty")}</div>
         ` : ""}
       </div>
+      <div class="divider-double"></div>
       <div class="powered-by">
-        &copy; POWERED BY LUMISOLUTIONZ
+        &copy; Powered by Lumisolutionz
       </div>
       <div class="divider-double"></div>
     </div>
@@ -1506,14 +1770,14 @@ export function generateRepairBillHtml(
     <style>
       @page {
         margin: 0;
-        size: 78mm auto;
+        size: 70mm auto;
       }
       * {
         box-sizing: border-box;
       }
       html, body {
-        width: 78mm;
-        max-width: 78mm;
+        width: 70mm;
+        max-width: 70mm;
       }
       body {
         font-family: 'Courier New', Courier, monospace, system-ui, -apple-system, sans-serif;
@@ -1524,36 +1788,63 @@ export function generateRepairBillHtml(
         background: #ffffff;
         margin: 0 auto;
         padding: 5px 2px;
-        width: 78mm;
-        max-width: 78mm;
+        width: 70mm;
+        max-width: 70mm;
         text-align: center;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
       .bill-container {
         width: 100%;
-        max-width: 78mm;
+        max-width: 70mm;
         margin: 0 auto;
         text-align: center;
       }
-      /* Top section: extra bold & prominent */
+      /* Top section: extra bold & prominent with Logo */
       .top-section {
         margin-bottom: 2px;
         text-align: center;
       }
+      .thermal-logo-wrap {
+        text-align: center;
+        margin-bottom: 4px;
+      }
+      .thermal-logo {
+        max-width: 52mm;
+        max-height: 25mm;
+        height: auto;
+        display: block;
+        margin: 0 auto;
+        object-fit: contain;
+        filter: grayscale(100%) contrast(150%);
+        -webkit-filter: grayscale(100%) contrast(150%);
+      }
       .shop-name {
-        font-size: 16.5px;
+        font-size: 18px;
         font-weight: 900;
         letter-spacing: 0.5px;
         text-transform: uppercase;
         margin: 0 0 1px 0;
         line-height: 1.15;
       }
-      .shop-info {
+      .shop-legal {
         font-size: 11px;
         font-weight: 800;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
         margin: 1px 0;
-        line-height: 1.2;
+      }
+      .shop-reg {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        margin: 1px 0;
+      }
+      .shop-info {
+        font-size: 12px;
+        font-weight: 800;
+        margin: 1px 0;
+        line-height: 1.25;
       }
       .divider-double {
         border-top: 1.5px dashed #000000;
@@ -1606,9 +1897,16 @@ export function generateRepairBillHtml(
         width: 100%;
       }
       .item-block {
-        margin-bottom: 4px;
+        margin-bottom: 5px;
+        padding-bottom: 5px;
+        border-bottom: 1px dashed #000000;
         text-align: left;
         width: 100%;
+      }
+      .item-block:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+        margin-bottom: 1px;
       }
       .item-row {
         display: flex;
@@ -1686,23 +1984,23 @@ export function generateRepairBillHtml(
         text-align: center;
       }
       .powered-by {
-        margin-top: 4px;
-        font-size: 10px;
-        font-weight: 900;
-        letter-spacing: 0.5px;
+        font-size: 10.5px;
+        font-weight: 800;
+        letter-spacing: 0.3px;
         text-align: center;
-        text-transform: uppercase;
+        padding: 2px 0;
+        margin: 1px 0;
       }
       @media print {
         html, body {
-          width: 78mm !important;
-          max-width: 78mm !important;
+          width: 70mm !important;
+          max-width: 70mm !important;
           margin: 0 auto !important;
-          padding: 2px 0 !important;
+          padding: 0 !important;
         }
         .bill-container {
-          width: 78mm !important;
-          max-width: 78mm !important;
+          width: 70mm !important;
+          max-width: 70mm !important;
         }
       }
     </style>
@@ -1710,9 +2008,14 @@ export function generateRepairBillHtml(
   <body>
     <div class="bill-container">
       <div class="top-section">
-        <div class="shop-name">${escapeHtml(shopName)}</div>
+        <div class="thermal-logo-wrap">
+          <img class="thermal-logo" src="${HOTLINE_THERMAL_LOGO_DATA_URL}" alt="Hotline Cellular" />
+        </div>
+        <div class="shop-name">HOTLINE CELLULAR</div>
+        <div class="shop-legal">${escapeHtml(shopName)}</div>
+        <div class="shop-reg">Reg No: ${escapeHtml(settings.regNo || "PV 00301591")}</div>
         <div class="shop-info">${escapeHtml(address)}</div>
-        <div class="shop-info">Phone: ${escapeHtml(phone)}</div>
+        <div class="shop-info">Hotlines: ${escapeHtml(phone)}</div>
         ${email ? `<div class="shop-info">Email: ${escapeHtml(email)}</div>` : ""}
       </div>
 
@@ -1796,6 +2099,7 @@ export function generateRepairBillHtml(
       <div class="footer-section">
         ${escapeHtml(footerMsg)}
       </div>
+      <div class="divider-double"></div>
       <div class="powered-by">
         &copy; Powered by Lumisolutionz
       </div>
@@ -1915,7 +2219,7 @@ export function generateDailySalesReportHtml(
           ${serialOrImei ? `<div class="sale-item-serial">S/N: ${escapeHtml(serialOrImei)}</div>` : ""}
           <div class="sale-item-sub">
             <span class="sale-item-calc">${qty} x Rs. ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            ${lineDisc > 0 ? `<span class="sale-item-disc">Disc: -Rs. ${lineDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` : ""}
+            ${lineDisc > 0 ? `<span class="sale-item-disc">Disc: Rs. - ${lineDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` : ""}
           </div>
         </div>
       `;
@@ -1948,7 +2252,7 @@ export function generateDailySalesReportHtml(
         ${overallSaleDisc > 0 ? `
         <div class="sale-subtotal-bar" style="border-top: none; font-size: 10px; font-weight: 700; color: #444; margin-top: 1px;">
           <span class="subtotal-label">Discount:</span>
-          <span class="subtotal-val">- Rs. ${overallSaleDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          <span class="subtotal-val">Rs. - ${overallSaleDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>` : ""}
         ${saleChange > 0 ? `
         <div class="sale-subtotal-bar" style="border-top: none; font-size: 10px; font-weight: 700; color: #444; margin-top: 1px;">
@@ -1977,31 +2281,33 @@ export function generateDailySalesReportHtml(
     <style>
       @page {
         margin: 0;
-        size: 78mm auto;
+        size: 65mm auto;
       }
       * {
         box-sizing: border-box;
       }
       html, body {
-        width: 78mm;
-        max-width: 78mm;
+        width: 70mm;
+        max-width: 70mm;
       }
       body {
         font-family: 'Courier New', Courier, monospace, system-ui, -apple-system, sans-serif;
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 700;
         line-height: 1.25;
         color: #000000;
         background: #ffffff;
         margin: 0 auto;
         padding: 5px 2px;
+        width: 70mm;
+        max-width: 70mm;
         text-align: center;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
       .bill-container {
         width: 100%;
-        max-width: 78mm;
+        max-width: 70mm;
         margin: 0 auto;
         text-align: center;
       }
@@ -2211,9 +2517,17 @@ export function generateDailySalesReportHtml(
       @media print {
         @page {
           margin: 0;
+          size: 70mm auto;
         }
-        body {
-          padding: 2px 0;
+        html, body {
+          width: 70mm !important;
+          max-width: 70mm !important;
+          margin: 0 auto !important;
+          padding: 0 !important;
+        }
+        .bill-container {
+          width: 70mm !important;
+          max-width: 70mm !important;
         }
       }
     </style>
@@ -2285,7 +2599,7 @@ export function generateDailySalesReportHtml(
           ${totalChangeGiven > 0 ? `
           <div class="summary-line payment-line" style="color: #444;">
             <span class="summary-label">CHANGE GIVEN:</span>
-            <span class="summary-val">- Rs. ${totalChangeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span class="summary-val">Rs. - ${totalChangeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
           ${paymentBreakdown["CASH"] ? `
           <div class="summary-line payment-line" style="font-weight: 900; border-top: 0.5px dashed #666; margin-top: 2px; padding-top: 2px;">

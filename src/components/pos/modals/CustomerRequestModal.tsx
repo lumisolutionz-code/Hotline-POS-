@@ -225,26 +225,32 @@ export function CustomerRequestModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl w-full max-w-2xl border border-slate-800/80 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 dark:bg-amber-400/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shrink-0">
               <FileText size={20} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                Customer Product Request
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                  Customer Product Request
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  REQUEST
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
                 Note down out-of-stock items asked by customers for procurement
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
           >
             <X size={18} />
           </button>
@@ -390,18 +396,18 @@ export function CustomerRequestModal({
               </div>
 
               {/* Submit Buttons */}
-              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-xl px-5 py-2.5 font-semibold text-xs transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-bold shadow-md shadow-amber-500/20 active:scale-95 disabled:opacity-50 transition-all flex items-center gap-2 cursor-pointer"
+                  className="px-6 py-2.5 rounded-xl bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white text-xs font-bold shadow-xs disabled:opacity-50 transition-all flex items-center gap-2 cursor-pointer"
                 >
                   {submitting ? (
                     <>

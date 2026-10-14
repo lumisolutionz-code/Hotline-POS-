@@ -274,25 +274,36 @@ export function WarrantyClaimModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-lg overflow-hidden border border-slate-200/80 dark:border-slate-800 shadow-2xl flex flex-col">
-        <div className="p-5 border-b border-slate-200/80 dark:border-slate-700/80 bg-slate-50 dark:bg-slate-800/80">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 dark:text-slate-100">
-              📋 Create Warranty Claim
-            </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2.5 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 rounded-xl text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 transition-all cursor-pointer"
-            >
-              ✕
-            </button>
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+      <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="bg-white rounded-2xl w-full max-w-lg overflow-hidden border border-slate-800/80 shadow-2xl flex flex-col text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+              📋
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                  Create Warranty Claim
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  WARRANTY
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                {warranty.warrantyNumber} • {warranty.product?.name || "Product"}
+              </p>
+            </div>
           </div>
-          <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            <span className="text-sky-600 dark:text-sky-400 font-mono font-semibold">{warranty.warrantyNumber}</span> •{" "}
-            {warranty.product?.name || "Product"}
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="p-5 space-y-4">
@@ -474,18 +485,18 @@ export function WarrantyClaimModal({
           </div>
         </div>
 
-        <div className="p-4 border-t border-slate-200/80 dark:border-slate-700/80 flex gap-3 bg-slate-50/50 dark:bg-slate-800/40">
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between gap-3 bg-white shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl transition-all border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white font-semibold cursor-pointer"
+            className="border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-xl px-5 py-2.5 font-semibold text-sm transition-colors cursor-pointer"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={loading || (resolution === "REPLACE" && !replacementProduct)}
-            className={`flex-1 py-3 bg-gradient-to-r ${resolutionInfo[resolution].color} text-white font-bold rounded-xl disabled:opacity-50 transition-all shadow-md cursor-pointer`}
+            className="px-6 py-2.5 bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white rounded-xl font-bold shadow-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer"
           >
             {loading
               ? "Creating..."

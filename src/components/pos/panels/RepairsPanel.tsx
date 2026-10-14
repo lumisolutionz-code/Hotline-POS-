@@ -106,7 +106,9 @@ Received By: ${repair.receivedBy?.username || "N/A"}
       Please keep this slip safe.
        Present it when collecting
             your device.
-═══════════════════════════════════════════
+-------------------------------------------
+        © Powered by Lumisolutionz
+-------------------------------------------
     `.trim();
 
     const printWindow = window.open("", "_blank", "width=400,height=600");
@@ -178,7 +180,9 @@ Technician: ${repair.assignedTo?.username || "N/A"}
 
 ═══════════════════════════════════════════
          Thank you for your business!
-═══════════════════════════════════════════
+-------------------------------------------
+        © Powered by Lumisolutionz
+-------------------------------------------
     `.trim();
 
     const printWindow = window.open("", "_blank", "width=400,height=600");
@@ -293,25 +297,32 @@ Technician: ${repair.assignedTo?.username || "N/A"}
 
   return (
     <div className="fixed inset-0 bg-slate-900/50 dark:bg-slate-950/50 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl w-full max-w-5xl max-h-[92vh] border border-sky-200/50 flex flex-col shadow-2xl overflow-hidden rounded-3xl">
-        {/* Header */}
-        <div className="bg-white/95 dark:bg-slate-900/95 border-b border-sky-200/50 dark:border-slate-700/50">
-          <div className="px-5 py-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-400 via-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-sky-500/20 shrink-0">
-              <span className="text-xl">🔧</span>
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-xl font-bold text-slate-800 dark:text-white leading-tight">
-                Repair Jobs
-              </h3>
-              <p className="text-slate-500 text-xs dark:text-slate-400 truncate">
-                View and manage all repair jobs
-              </p>
+      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[92vh] border border-slate-800/80 flex flex-col shadow-2xl overflow-hidden text-slate-800">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="bg-[#0f172a] text-white border-b border-slate-800 shrink-0">
+          <div className="px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+                🔧
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                    Repair Jobs
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                    SERVICE CENTER
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  View and manage all customer repair tickets
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={onRefresh}
-                className="p-2.5 bg-white/60 dark:bg-slate-800/60 hover:bg-sky-50 dark:hover:bg-slate-700 rounded-xl text-slate-500 dark:text-slate-400 hover:text-sky-600 transition-all hover:rotate-180 duration-500 border border-slate-200/80 dark:border-slate-700 shadow-sm"
+                className="p-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-lg hover:bg-slate-700 transition-colors cursor-pointer"
                 title="Refresh"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -320,7 +331,7 @@ Technician: ${repair.assignedTo?.username || "N/A"}
               </button>
               <button
                 onClick={onClose}
-                className="p-2.5 bg-white/60 dark:bg-slate-800/60 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl text-slate-500 dark:text-slate-400 hover:text-red-500 transition-all border border-slate-200/80 dark:border-slate-700 shadow-sm"
+                className="p-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-lg hover:bg-slate-700 transition-colors cursor-pointer"
                 title="Close"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -613,7 +624,7 @@ Technician: ${repair.assignedTo?.username || "N/A"}
                                   Advance Paid
                                 </span>
                                 <span className="text-emerald-600">
-                                  - Rs. {repair.advancePayment.toLocaleString()}
+                                  Rs. - {repair.advancePayment.toLocaleString()}
                                 </span>
                               </div>
                               <div className="text-center mb-3">

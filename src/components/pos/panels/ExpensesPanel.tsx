@@ -126,43 +126,43 @@ export function ExpensesPanel({ onClose }: ExpensesPanelProps): JSX.Element {
   return (
     <div className="fixed inset-y-0 right-0 w-full md:w-[600px] bg-slate-50 dark:bg-slate-900 shadow-2xl z-50 flex flex-col transform transition-transform duration-300 border-l border-slate-200 dark:border-slate-800">
       {/* Header */}
-      <div className="flex items-center justify-between p-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/50 flex items-center justify-center">
-            <Receipt className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-800 dark:text-white">
-              Expenses
+      <div className="bg-[#0f172a] text-white px-6 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-bold text-white tracking-wide">
+              Daily Expenses
             </h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Manage daily expenses
-            </p>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+              EXPENSE LOG
+            </span>
           </div>
+          <p className="text-xs text-slate-400 font-mono mt-0.5">
+            Track and manage store expenditures
+          </p>
         </div>
         <button
           onClick={onClose}
-          className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-colors"
+          className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-colors cursor-pointer"
         >
-          <X className="w-6 h-6" />
+          <X className="w-5 h-5" />
         </button>
       </div>
 
       {/* Toolbar */}
-      <div className="p-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50 flex gap-4">
+      <div className="p-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50 flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search expenses..."
+            placeholder="Search expenses by description or payee..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
           />
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors font-medium"
+          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all font-bold text-xs shadow-sm cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           Add Expense
@@ -233,39 +233,53 @@ export function ExpensesPanel({ onClose }: ExpensesPanelProps): JSX.Element {
 
       {/* Add Modal */}
       {showAddModal && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
-            <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
-              <h3 className="font-bold text-lg text-slate-800 dark:text-white">Add Expense</h3>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-slate-800/80">
+            <div className="bg-[#0f172a] text-white px-5 py-3.5 flex justify-between items-center border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-sm text-white">Add Expense</h3>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  NEW
+                </span>
+              </div>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <form onSubmit={handleAddExpense} className="p-4 space-y-4">
+            <form onSubmit={handleAddExpense} className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Description *</label>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  Description *
+                </label>
                 <input
                   type="text"
                   required
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-orange-500 text-slate-800 dark:text-white"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white transition-all"
                   placeholder="e.g. Lunch for staff"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">To Whom *</label>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  To Whom *
+                </label>
                 <input
                   type="text"
                   required
                   value={toWhom}
                   onChange={(e) => setToWhom(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-orange-500 text-slate-800 dark:text-white"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white transition-all"
                   placeholder="e.g. John Doe / Restaurant"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Amount (Rs.) *</label>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  Amount (Rs.) *
+                </label>
                 <input
                   type="number"
                   required
@@ -273,16 +287,24 @@ export function ExpensesPanel({ onClose }: ExpensesPanelProps): JSX.Element {
                   step="0.01"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-orange-500 text-slate-800 dark:text-white"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white font-mono font-bold transition-all"
                   placeholder="0.00"
                 />
               </div>
-              <div className="pt-2 flex gap-3">
-                <button type="button" onClick={() => setShowAddModal(false)} className="flex-1 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium">
+              <div className="pt-2 flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 px-4 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl font-bold text-xs transition-all cursor-pointer"
+                >
                   Cancel
                 </button>
-                <button type="submit" disabled={isSubmitting} className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center">
-                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : "Save"}
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center justify-center cursor-pointer"
+                >
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save Expense"}
                 </button>
               </div>
             </form>

@@ -368,22 +368,41 @@ export default function Settings(): JSX.Element {
             </h2>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-2">
-                  Shop Name *
-                </label>
-                <input
-                  type="text"
-                  value={shopSettings.shopName}
-                  onChange={(e) =>
-                    setShopSettings({
-                      ...shopSettings,
-                      shopName: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
-                  placeholder="Enter shop name"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">
+                    Shop / Business Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={shopSettings.shopName}
+                    onChange={(e) =>
+                      setShopSettings({
+                        ...shopSettings,
+                        shopName: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    placeholder="Enter shop name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">
+                    Company Registration No (PV / Business Reg)
+                  </label>
+                  <input
+                    type="text"
+                    value={shopSettings.regNo || ""}
+                    onChange={(e) =>
+                      setShopSettings({
+                        ...shopSettings,
+                        regNo: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    placeholder="e.g. PV 00301591"
+                  />
+                </div>
               </div>
 
               <div>
@@ -459,6 +478,33 @@ export default function Settings(): JSX.Element {
                 />
               </div>
 
+              <div className="flex items-center justify-between p-4 bg-slate-700/50 border border-slate-600 rounded-xl">
+                <div>
+                  <div className="font-medium text-white text-sm">Pre-printed Invoice Stationery (A4)</div>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    When enabled, invoices print only dynamic content (Bill To, Invoice Details, Items Table, and Totals) with 55mm top & 45mm bottom margins for pre-printed letterhead paper.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShopSettings({
+                      ...shopSettings,
+                      usePreprintedPaper: !(shopSettings.usePreprintedPaper ?? true),
+                    })
+                  }
+                  className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-200 ${
+                    (shopSettings.usePreprintedPaper ?? true) ? "bg-cyan-500" : "bg-slate-600"
+                  }`}
+                >
+                  <div
+                    className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ${
+                      (shopSettings.usePreprintedPaper ?? true) ? "translate-x-6" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+
               {/* Preview */}
               <div className="mt-6 p-4 bg-slate-900 rounded-xl border border-slate-700">
                 <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">
@@ -466,6 +512,7 @@ export default function Settings(): JSX.Element {
                 </p>
                 <pre className="text-slate-300 font-mono text-sm whitespace-pre-wrap">
                   {shopSettings.shopName || "[Shop Name]"}
+                  {shopSettings.regNo && `\nReg No: ${shopSettings.regNo}`}
                   {shopSettings.address && `\n${shopSettings.address}`}
                   {shopSettings.phone && `\nPhone: ${shopSettings.phone}`}
                   {shopSettings.email && `\nEmail: ${shopSettings.email}`}

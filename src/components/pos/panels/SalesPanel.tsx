@@ -61,22 +61,36 @@ export function SalesPanel({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] border border-slate-700 flex flex-col">
-        <div className="p-4 border-b border-slate-700 flex justify-between">
-          <h3 className="text-xl font-bold text-white">📊 Sales Report</h3>
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+      <div className="bg-slate-900 rounded-2xl w-full max-w-4xl max-h-[90vh] border border-slate-800 shadow-2xl flex flex-col overflow-hidden text-slate-100">
+        {/* Header: Deep Dark Slate (#0f172a) */}
+        <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+              📊
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">Sales History</h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  REPORTS
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">View and filter completed sales records</p>
+            </div>
+          </div>
           <div className="flex gap-2">
-            <button onClick={() => onRefresh({ search, startDate, endDate })} className="p-2 bg-slate-700 rounded-lg text-white hover:bg-slate-600">
+            <button onClick={() => onRefresh({ search, startDate, endDate })} className="p-2 bg-slate-800 text-slate-300 hover:text-white rounded-lg hover:bg-slate-700 transition-colors cursor-pointer" title="Refresh">
               🔄
             </button>
-            <button onClick={onClose} className="p-2 bg-slate-700 rounded-lg text-white hover:bg-slate-600">
+            <button onClick={onClose} className="p-2 bg-slate-800 text-slate-300 hover:text-white rounded-lg hover:bg-slate-700 transition-colors cursor-pointer" title="Close">
               ✕
             </button>
           </div>
         </div>
 
         {/* Filters Section */}
-        <div className="p-4 border-b border-slate-700 bg-slate-800/50 flex gap-4 items-end flex-wrap">
+        <div className="p-4 border-b border-slate-800 bg-slate-900/80 flex gap-4 items-end flex-wrap">
           <div className="flex-1 min-w-[200px]">
             <label className="block text-xs text-slate-400 mb-1">Search (Number, Phone, IMEI)</label>
             <input 
@@ -84,7 +98,7 @@ export function SalesPanel({
               value={search} 
               onChange={(e) => setSearch(e.target.value)} 
               placeholder="Search..." 
-              className="w-full px-3 py-2 bg-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500" 
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" 
             />
           </div>
           <div>
@@ -93,7 +107,7 @@ export function SalesPanel({
               type="date" 
               value={startDate} 
               onChange={(e) => setStartDate(e.target.value)} 
-              className="px-3 py-2 bg-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500" 
+              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" 
             />
           </div>
           <div>
@@ -102,14 +116,14 @@ export function SalesPanel({
               type="date" 
               value={endDate} 
               onChange={(e) => setEndDate(e.target.value)} 
-              className="px-3 py-2 bg-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500" 
+              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" 
             />
           </div>
           <div className="flex gap-2">
-            <button onClick={handleApplyFilters} className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition-colors">
+            <button onClick={handleApplyFilters} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold shadow-xs transition-colors cursor-pointer">
               Apply
             </button>
-            <button onClick={handleClearFilters} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-medium transition-colors">
+            <button onClick={handleClearFilters} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer">
               Clear
             </button>
           </div>
@@ -160,7 +174,7 @@ export function SalesPanel({
                     <div className="text-right">
                       <p className="text-lg font-bold text-cyan-400">Rs. {sale.grandTotal?.toFixed(2)}</p>
                       {sale.discountTotal > 0 && (
-                        <p className="text-xs text-rose-400 font-medium">Disc: -Rs. {sale.discountTotal.toFixed(2)}</p>
+                        <p className="text-xs text-rose-400 font-medium">Disc: Rs. - {sale.discountTotal.toFixed(2)}</p>
                       )}
                     </div>
                   </div>
