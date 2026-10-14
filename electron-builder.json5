@@ -35,7 +35,7 @@
       }
     ],
     "icon": "build/icon.ico",
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    "artifactName": "Hotline-Cellular-POS-Windows-${version}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,

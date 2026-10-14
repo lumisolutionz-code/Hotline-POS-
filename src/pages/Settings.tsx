@@ -22,7 +22,7 @@ export default function Settings(): JSX.Element {
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
 
-  const [activeTab, setActiveTab] = useState<"shop" | "shortcuts" | "appearance" | "hardware">("shop");
+  const [activeTab, setActiveTab] = useState<"shop" | "shortcuts" | "appearance" | "hardware" | "updates">("shop");
   const [shopSettings, setShopSettings] = useState<ShopSettings>(
     DEFAULT_SHOP_SETTINGS,
   );
@@ -33,6 +33,17 @@ export default function Settings(): JSX.Element {
   const [recordingKey, setRecordingKey] = useState<
     keyof KeyboardShortcuts | null
   >(null);
+
+  // Auto-Updater State
+  const [appVersion, setAppVersion] = useState<string>("1.1.0");
+  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
+  const [githubToken, setGithubToken] = useState<string>("");
+  const [tokenSaved, setTokenSaved] = useState<boolean>(false);
+  const [updateStatus, setUpdateStatus] = useState<{
+    type: "idle" | "checking" | "available" | "latest" | "error";
+    message: string;
+    detail?: string;
+  }>({ type: "idle", message: "" });
 
   // Scanner Hardware State
   const [scannerDevices, setScannerDevices] = useState<ScannerDevice[]>([]);
@@ -50,6 +61,17 @@ export default function Settings(): JSX.Element {
     setShortcuts(getKeyboardShortcuts());
     const savedScanners = getSavedScannerDevices();
     setScannerDevices(savedScanners);
+
+    // Load app version and updater token from Electron main process
+    if (window.ipcRenderer) {
+      window.ipcRenderer.invoke("get_app_version").then((ver: string) => {
+        if (ver) setAppVersion(ver);
+      }).catch(() => {});
+
+      window.ipcRenderer.invoke("get_update_token").then((token: string) => {
+        if (token) setGithubToken(token);
+      }).catch(() => {});
+    }
 
     // Initialize WebHID
     if (!("hid" in navigator)) {
@@ -275,6 +297,14 @@ export default function Settings(): JSX.Element {
     setShortcuts(DEFAULT_KEYBOARD_SHORTCUTS);
   };
 
+  const handleSaveGithubToken = async () => {
+    if (window.ipcRenderer) {
+      await window.ipcRenderer.invoke("save_update_token", githubToken);
+      setTokenSaved(true);
+      setTimeout(() => setTokenSaved(false), 2500);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-50 via-blue-50 to-white dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Header */}
@@ -347,6 +377,16 @@ export default function Settings(): JSX.Element {
             }`}
           >
             🔌 Hardware
+          </button>
+          <button
+            onClick={() => setActiveTab("updates")}
+            className={`px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+              activeTab === "updates"
+                ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg shadow-sky-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700"
+            }`}
+          >
+            🚀 Software Updates
           </button>
         </div>
 
@@ -902,6 +942,198 @@ export default function Settings(): JSX.Element {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Software Updates Tab */}
+        {activeTab === "updates" && (
+          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 space-y-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  🚀 System Updates
+                </h2>
+                <p className="text-sm text-slate-400 mt-1">
+                  Manage POS client application version and automatic updates
+                </p>
+              </div>
+              <span className="px-3 py-1 bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-xl font-mono text-xs font-bold">
+                Installed: v{appVersion}
+              </span>
+            </div>
+
+            {/* Release Channel Info Card */}
+            <div className="bg-slate-900/60 rounded-xl p-4 border border-slate-700/80 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Release Repository</span>
+                <span className="font-mono text-slate-200 font-semibold">
+                  github.com/lumisolutionz-code/Hotline-POS-
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Target Channel</span>
+                <span className="text-emerald-400 font-semibold">Stable Production</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Auto-Update Mode</span>
+                <span className="text-slate-200 font-semibold">Automatic Silent Download</span>
+              </div>
+            </div>
+
+            {/* Private Repo Warning Notice */}
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-xs text-amber-200/90 leading-relaxed space-y-2">
+              <div className="font-bold flex items-center gap-1.5 text-amber-300">
+                <span>⚠️</span> Why updates fail if your GitHub repository is Private:
+              </div>
+              <p>
+                GitHub automatically blocks unauthenticated requests to <strong>Private</strong> repositories with a <code>404 Not Found</code> error. For cashiers and POS stations to detect and download updates seamlessly:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-slate-300 pl-1">
+                <li><strong>Recommended:</strong> Make your GitHub repository (<code>lumisolutionz-code/Hotline-POS-</code>) <strong>Public</strong> in GitHub repository Settings → Danger Zone → Change Visibility to Public.</li>
+                <li><strong>Or:</strong> Provide a GitHub Personal Access Token (PAT) below with <code>repo</code> or <code>Contents: read-only</code> permissions.</li>
+                <li>Ensure all 3 release files are attached to the release: <code>.exe</code>, <code>latest.yml</code>, and <code>.blockmap</code>.</li>
+              </ul>
+            </div>
+
+            {/* GitHub Personal Access Token Configuration (For Private Repositories) */}
+            <div className="bg-slate-900/60 rounded-xl p-4 border border-slate-700/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    🔑 GitHub Personal Access Token (PAT)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Required only if your repository is Private. Leave blank if your repository is Public.
+                  </p>
+                </div>
+                {tokenSaved && (
+                  <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-medium animate-in fade-in">
+                    ✓ Token Saved
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxx (GitHub Read-Only Token)"
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value)}
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 font-mono"
+                />
+                <button
+                  onClick={handleSaveGithubToken}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                >
+                  Save Token
+                </button>
+                {githubToken && (
+                  <button
+                    onClick={async () => {
+                      setGithubToken("");
+                      if (window.ipcRenderer) {
+                        await window.ipcRenderer.invoke("save_update_token", "");
+                        setTokenSaved(true);
+                        setTimeout(() => setTokenSaved(false), 2000);
+                      }
+                    }}
+                    className="px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-300 text-xs rounded-xl border border-red-700/50 transition-colors cursor-pointer"
+                    title="Clear Token"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Check for Updates Action */}
+            <div className="pt-2">
+              <button
+                onClick={async () => {
+                  if (!window.ipcRenderer) {
+                    setUpdateStatus({
+                      type: "error",
+                      message: "Desktop Update Service Unavailable",
+                      detail: "Auto-updater is only supported inside the packaged Electron application.",
+                    });
+                    return;
+                  }
+
+                  setCheckingUpdate(true);
+                  setUpdateStatus({ type: "checking", message: "Connecting to GitHub Releases..." });
+
+                  try {
+                    const res = await window.ipcRenderer.invoke("check_for_updates");
+                    if (res?.success) {
+                      if (res.hasUpdate) {
+                        setUpdateStatus({
+                          type: "available",
+                          message: `New update found: v${res.updateVersion}!`,
+                          detail: "The update is downloading in the background. You will be prompted to restart when ready.",
+                        });
+                      } else {
+                        setUpdateStatus({
+                          type: "latest",
+                          message: "Your POS is up to date!",
+                          detail: `You are running the latest version (v${res.currentVersion || appVersion}).`,
+                        });
+                      }
+                    } else {
+                      setUpdateStatus({
+                        type: "error",
+                        message: res?.is404
+                          ? "GitHub Returned 404 (Private Repository)"
+                          : "Update Check Failed",
+                        detail: res?.is404
+                          ? "GitHub returned 404 Not Found because the repository is set to Private. Set the repository visibility to Public on GitHub to allow client updates."
+                          : res?.error || "Could not complete update check.",
+                      });
+                    }
+                  } catch (err: any) {
+                    setUpdateStatus({
+                      type: "error",
+                      message: "Connection Error",
+                      detail: err?.message || String(err),
+                    });
+                  } finally {
+                    setCheckingUpdate(false);
+                  }
+                }}
+                disabled={checkingUpdate}
+                className="px-6 py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-sky-500/25 flex items-center gap-2 cursor-pointer"
+              >
+                {checkingUpdate ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    Checking for Updates...
+                  </>
+                ) : (
+                  <>
+                    <span>🔄</span> Check for Updates Now
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Status Feedback Result */}
+            {updateStatus.type !== "idle" && (
+              <div
+                className={`p-4 rounded-xl border text-xs leading-relaxed space-y-1 ${
+                  updateStatus.type === "error"
+                    ? "bg-red-500/10 border-red-500/30 text-red-300"
+                    : updateStatus.type === "latest"
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                    : updateStatus.type === "available"
+                    ? "bg-blue-500/10 border-blue-500/30 text-blue-300"
+                    : "bg-slate-700/50 border-slate-600 text-slate-300"
+                }`}
+              >
+                <div className="font-bold text-sm">{updateStatus.message}</div>
+                {updateStatus.detail && (
+                  <div className="text-slate-300 mt-1">{updateStatus.detail}</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
