@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Receipt, FileText, Check, Banknote, CreditCard } from "lucide-react";
 import { api } from "../../../lib/api";
 import { getShopSettings } from "../../../lib/settings";
 import {
@@ -42,10 +43,6 @@ export function PaymentModal({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose, showOverrideModal, processing, success]);
-
-  const hasWarrantyProducts = cart.some(
-    (item) => (item.warrantyDuration ?? 0) > 0,
-  );
 
   const totalItemDiscount = cart.reduce(
     (sum, item) => sum + (Number(item.discountAmount ?? 0) * item.quantity),
@@ -278,14 +275,8 @@ export function PaymentModal({
             </div>
           </div>
 
-          {/* Customer Info Section (Always Visible) */}
-          <div
-            className={`bg-slate-50/80 dark:bg-slate-800/60 rounded-xl border p-3 transition-colors ${
-              hasWarrantyProducts && (!customerName.trim() || !customerPhone.trim())
-                ? "border-amber-400 dark:border-amber-500/70 ring-1 ring-amber-400/40"
-                : "border-slate-200/80 dark:border-slate-700/80"
-            }`}
-          >
+          {/* Customer Info Section (Always Visible & 100% Optional) */}
+          <div className="bg-slate-50/80 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/80 p-3 transition-colors">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
                 <svg
@@ -303,15 +294,15 @@ export function PaymentModal({
                 </svg>
                 Customer Information
               </span>
-              {hasWarrantyProducts && (!customerName.trim() || !customerPhone.trim()) ? (
-                <span className="text-[10px] bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-700/60 font-bold animate-pulse">
-                  ⚠️ Name & Number Required
+              {customerName.trim() || customerPhone.trim() || customerEmail.trim() ? (
+                <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full border border-emerald-200 font-semibold flex items-center gap-0.5">
+                  <Check className="w-2.5 h-2.5 stroke-[3]" /> Added
                 </span>
-              ) : (customerName.trim() || customerPhone.trim() || customerEmail.trim()) ? (
-                <span className="text-[10px] bg-sky-100 dark:bg-sky-950/80 text-sky-700 dark:text-sky-300 px-1.5 py-0.5 rounded-full border border-sky-300 dark:border-sky-700/60 font-semibold">
-                  ✓ Added
+              ) : (
+                <span className="text-[10px] text-slate-400 font-medium">
+                  Optional
                 </span>
-              ) : null}
+              )}
             </div>
 
             <div className="space-y-2">
@@ -385,21 +376,33 @@ export function PaymentModal({
               </label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { method: "CASH" as const, icon: "💵", label: "Cash" },
-                  { method: "CARD" as const, icon: "💳", label: "Card" },
-                ].map(({ method, icon, label }) => (
+                  { method: "CASH" as const, icon: Banknote, label: "Cash" },
+                  { method: "CARD" as const, icon: CreditCard, label: "Card" },
+                ].map(({ method, icon: Icon, label }) => (
                   <button
                     key={method}
                     type="button"
-                    onClick={() => setPaymentMethod(method)}
+                    onClick={() => {
+                      setPaymentMethod(method);
+                      if (method === "CARD") {
+                        setAmountReceived(String(total));
+                      }
+                    }}
                     className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                       paymentMethod === method
                         ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
                         : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                     }`}
                   >
-                    <span className="text-sm">{icon}</span>
-                    <span className="text-xs font-semibold">{label}</span>
+                    <Icon className="w-3.5 h-3.5" />
+                    <span className="text-xs font-semibold flex items-center gap-1">
+                      {label}
+                      {paymentMethod === method && (
+                        <span className="text-[10px] bg-white/20 px-1 rounded-full font-bold">
+                          <Check className="w-2.5 h-2.5 inline stroke-[3]" />
+                        </span>
+                      )}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -416,18 +419,18 @@ export function PaymentModal({
                 <button
                   type="button"
                   onClick={() => setPrintBill(!printBill)}
-                  className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                  className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                     printBill
                       ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
                       : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
-                  <span className="text-sm">🧾</span>
-                  <span className="text-xs font-semibold flex items-center gap-0.5">
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span className="text-xs font-semibold flex items-center gap-1">
                     Bill
                     {printBill && (
-                      <span className="text-[10px] bg-white/25 px-1 rounded-full font-bold">
-                        ✓
+                      <span className="text-[10px] bg-white/20 px-1 rounded-full font-bold">
+                        <Check className="w-2.5 h-2.5 inline stroke-[3]" />
                       </span>
                     )}
                   </span>
@@ -435,18 +438,18 @@ export function PaymentModal({
                 <button
                   type="button"
                   onClick={() => setPrintInvoice(!printInvoice)}
-                  className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                  className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                     printInvoice
                       ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
                       : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
-                  <span className="text-sm">📑</span>
-                  <span className="text-xs font-semibold flex items-center gap-0.5">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span className="text-xs font-semibold flex items-center gap-1">
                     Invoice
                     {printInvoice && (
-                      <span className="text-[10px] bg-white/25 px-1 rounded-full font-bold">
-                        ✓
+                      <span className="text-[10px] bg-white/20 px-1 rounded-full font-bold">
+                        <Check className="w-2.5 h-2.5 inline stroke-[3]" />
                       </span>
                     )}
                   </span>
@@ -454,6 +457,34 @@ export function PaymentModal({
               </div>
             </div>
           </div>
+
+          {/* Card Payment Info */}
+          {paymentMethod === "CARD" && (
+            <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-xl p-3.5 text-center space-y-2">
+              <div className="w-9 h-9 mx-auto rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                <CreditCard className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center justify-center gap-1.5">
+                  Card Payment Selected
+                  <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 px-1.5 py-0.2 rounded-full font-semibold">
+                    Terminal
+                  </span>
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Process full payment through credit/debit card machine
+                </p>
+              </div>
+              <div className="pt-2 border-t border-blue-100 dark:border-blue-900/40 flex items-center justify-between px-2 text-xs">
+                <span className="text-slate-600 dark:text-slate-400 font-semibold">
+                  Amount to Charge:
+                </span>
+                <span className="text-base font-black text-blue-600 dark:text-blue-400">
+                  Rs. {total.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Cash Payment Options */}
           {paymentMethod === "CASH" && (
@@ -492,12 +523,12 @@ export function PaymentModal({
                     type="number"
                     value={amountReceived}
                     onChange={(e) => setAmountReceived(e.target.value)}
-                    className={`w-full pl-12 pr-3 py-2 bg-slate-50 dark:bg-slate-900 rounded-xl text-slate-900 dark:text-white text-xl text-center font-black border-2 transition-all focus:outline-none placeholder-slate-400 dark:placeholder-slate-600 ${
+                    className={`w-full pl-12 pr-3 py-2 bg-slate-50 rounded-xl text-slate-900 text-xl text-center font-black border-2 transition-all focus:outline-none placeholder-slate-400 ${
                       amountReceived && parseFloat(amountReceived) >= total
-                        ? "border-emerald-500/70 dark:border-emerald-500/70 focus:border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                        ? "border-emerald-500/70 focus:border-emerald-500 text-emerald-600"
                         : amountReceived && parseFloat(amountReceived) < total
-                          ? "border-amber-500/70 dark:border-amber-500/70 focus:border-amber-500"
-                          : "border-slate-200 dark:border-slate-700 focus:border-sky-500"
+                          ? "border-amber-500/70 focus:border-amber-500"
+                          : "border-slate-300 focus:border-sky-500"
                     }`}
                     placeholder="0"
                     autoFocus

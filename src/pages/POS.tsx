@@ -52,6 +52,7 @@ import {
   Watch,
   Laptop,
   Shield,
+  Globe,
 } from "lucide-react";
 
 const getCategoryIcon = (name: string, className = "w-4 h-4") => {
@@ -229,6 +230,67 @@ export default function POS(): JSX.Element {
     }, 3000);
   };
 
+  // SSO Navigation to Website Admin Panel
+  const handleGoToWebsite = () => {
+    try {
+      const websiteBase = (
+        import.meta.env.VITE_WEBSITE_URL ||
+        ((import.meta.env.VITE_API_URL || "").includes("localhost") ||
+        (import.meta.env.VITE_API_URL || "").includes("127.0.0.1")
+          ? "http://localhost:8000"
+          : "https://hotlinecellular.lk")
+      ).replace(/\/+$/, "");
+
+      // Retrieve credentials stored during login or active token
+      const savedCredsRaw = localStorage.getItem("pos_auth_creds");
+      const token = localStorage.getItem("accessToken") || "";
+      let username = "";
+      let password = "";
+
+      if (savedCredsRaw) {
+        try {
+          const parsed = JSON.parse(savedCredsRaw);
+          username = parsed.username || "";
+          password = parsed.password || "";
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!username && user?.username) {
+        username = user.username;
+      }
+
+      const ssoPayload = {
+        username,
+        password,
+        token,
+        timestamp: Date.now(),
+      };
+
+      const payloadStr = JSON.stringify(ssoPayload);
+      const encodedData = btoa(
+        encodeURIComponent(payloadStr).replace(/%([0-9A-F]{2})/g, (_, p1) =>
+          String.fromCharCode(parseInt(p1, 16))
+        )
+      );
+
+      const ssoUrl = `${websiteBase}/admin/sso-login?sso_data=${encodeURIComponent(encodedData)}`;
+
+      const ipc = (window as any).ipcRenderer;
+      if (ipc && typeof ipc.invoke === "function") {
+        ipc.invoke("open_external", ssoUrl).catch(() => {
+          window.open(ssoUrl, "_blank");
+        });
+      } else {
+        window.open(ssoUrl, "_blank");
+      }
+    } catch (err: any) {
+      console.error("Failed to redirect to website:", err);
+      showError("Failed to open website admin panel");
+    }
+  };
+
   // Helper to format variant display
   const formatVariantDisplay = (v: any) => {
     if (!v) return undefined;
@@ -275,16 +337,21 @@ export default function POS(): JSX.Element {
     cartRef.current = cart;
   }, [cart]);
 
+  const processScannedBarcodeRef = useRef<(rawCode: string) => Promise<void>>(() => Promise.resolve());
+  useEffect(() => {
+    processScannedBarcodeRef.current = processScannedBarcode;
+  });
+
   // Process scanned barcode, SKU, or IMEI/Serial
   const processScannedBarcode = async (rawCode: string) => {
     const code = rawCode.trim();
     if (!code) return;
 
-    // Deduplicate rapid duplicate scans (within 800ms)
+    // Deduplicate rapid duplicate scans (within 400ms)
     const now = Date.now();
     if (
       lastProcessedScanRef.current.code.toLowerCase() === code.toLowerCase() &&
-      now - lastProcessedScanRef.current.time < 800
+      now - lastProcessedScanRef.current.time < 400
     ) {
       return;
     }
@@ -293,19 +360,255 @@ export default function POS(): JSX.Element {
     const currentProducts = productsRef.current && productsRef.current.length > 0 ? productsRef.current : products;
     const currentCart = cartRef.current || cart;
 
-    // 1. Direct IMEI Lookup -> Auto-add to cart without pop-up
-    try {
-      const imeiRes = await api<{ status?: string; data?: any }>(
-        `/inventory/lookup/imei/${encodeURIComponent(code)}`
-      ).catch(() => null);
+    // =========================================================================
+    // STEP 1: INSTANT IN-MEMORY LOOKUP (< 0.1ms, zero network latency!)
+    // Directly checks loaded products for variant or product barcode/SKU/itemCode
+    // =========================================================================
+    let targetProduct: any = null;
+    let targetVariant: any = null;
 
+    // Check if code matches a variant barcode/itemCode/sku/_id in memory
+    for (const p of currentProducts) {
+      if (p.variants && Array.isArray(p.variants)) {
+        const matchingVariant = p.variants.find(
+          (v: any) =>
+            (v.itemCode && String(v.itemCode).trim().toLowerCase() === code.toLowerCase()) ||
+            (v.barcode && String(v.barcode).trim().toLowerCase() === code.toLowerCase()) ||
+            (v.sku && String(v.sku).trim().toLowerCase() === code.toLowerCase()) ||
+            (v._id && String(v._id).toLowerCase() === code.toLowerCase())
+        );
+        if (matchingVariant) {
+          targetProduct = p;
+          targetVariant = matchingVariant;
+          break;
+        }
+      }
+    }
+
+    // Check if code matches a product barcode, sku, or itemCode in memory
+    if (!targetProduct) {
+      targetProduct = currentProducts.find(
+        (p: any) =>
+          (p.barcode && String(p.barcode).trim().toLowerCase() === code.toLowerCase()) ||
+          (p.sku && String(p.sku).trim().toLowerCase() === code.toLowerCase()) ||
+          (p.itemCode && String(p.itemCode).trim().toLowerCase() === code.toLowerCase())
+      );
+    }
+
+    // Check if code matches an IMEI or Serial in any product's stockItems directly in local memory (< 0.1ms)
+    let matchedStockItem: any = null;
+    let matchedStockItemProduct: any = null;
+
+    if (!targetProduct) {
+      const lowerCode = code.toLowerCase();
+      for (const p of currentProducts as any[]) {
+        if (Array.isArray(p.stockItems) && p.stockItems.length > 0) {
+          const found = p.stockItems.find((si: any) =>
+            (si.imei1 && String(si.imei1).trim().toLowerCase() === lowerCode) ||
+            (si.imei2 && String(si.imei2).trim().toLowerCase() === lowerCode) ||
+            (si.serialNumber && String(si.serialNumber).trim().toLowerCase() === lowerCode)
+          );
+          if (found) {
+            matchedStockItemProduct = p;
+            matchedStockItem = found;
+            break;
+          }
+        }
+      }
+    }
+
+    if (matchedStockItemProduct && matchedStockItem) {
+      const liveCart = cartRef.current || currentCart;
+      const alreadyInCart = liveCart.some(
+        (item) =>
+          (item.serialNumber && String(item.serialNumber).trim().toLowerCase() === code.toLowerCase()) ||
+          (item.stockItemId && String(item.stockItemId) === String(matchedStockItem._id))
+      );
+
+      if (alreadyInCart) {
+        showError(`Item with IMEI/Serial "${code}" is already in the cart!`);
+        return;
+      }
+
+      // Resolve variant
+      let variantObj: any = null;
+      if (matchedStockItem.variant && Array.isArray(matchedStockItemProduct.variants)) {
+        variantObj = matchedStockItemProduct.variants.find((v: any) =>
+          String(v._id) === String(matchedStockItem.variant?._id || matchedStockItem.variant)
+        );
+      }
+      if (!variantObj && Array.isArray(matchedStockItemProduct.variants) && matchedStockItemProduct.variants.length === 1) {
+        variantObj = matchedStockItemProduct.variants[0];
+      }
+
+      addToCart(
+        matchedStockItemProduct,
+        code,
+        variantObj || (typeof matchedStockItem.variant === "object" ? matchedStockItem.variant : undefined),
+        matchedStockItem._id,
+        matchedStockItem.sellingPrice || variantObj?.sellingPrice || matchedStockItemProduct.sellingPrice,
+        true
+      );
+      return;
+    }
+
+    // Check if code matches a Serial number for non-IMEI (bulk/quantity) products directly in memory
+    let matchedSerial: string | null = null;
+
+    if (!targetProduct) {
+      const lowerCode = code.toLowerCase();
+      for (const p of currentProducts as any[]) {
+        if (!isImeiProduct(p)) {
+          if (p.serialNumber && String(p.serialNumber).trim().toLowerCase() === lowerCode) {
+            targetProduct = p;
+            matchedSerial = code;
+            break;
+          }
+          if (Array.isArray(p.serialNumbers) && p.serialNumbers.some((s: string) => String(s).trim().toLowerCase() === lowerCode)) {
+            targetProduct = p;
+            matchedSerial = code;
+            break;
+          }
+        }
+      }
+    }
+
+    // If a Serial number of a quantity product was matched directly in local memory:
+    if (targetProduct && matchedSerial) {
+      const prodVariants = Array.isArray(targetProduct.variants) ? targetProduct.variants : [];
+      if (prodVariants.length > 1 && !targetVariant) {
+        setPendingProduct({ ...targetProduct, variants: prodVariants });
+        setPendingVariantId(undefined);
+        setPendingSerialNumber(code);
+        setShowVariantModal(true);
+        return;
+      }
+      addToCart(
+        targetProduct,
+        code,
+        targetVariant || prodVariants[0] || undefined,
+        undefined,
+        targetVariant?.sellingPrice || targetProduct.sellingPrice,
+        true
+      );
+      return;
+    }
+
+    // If product/variant found in local memory:
+    if (targetProduct) {
+      const prodVariants = Array.isArray(targetProduct.variants) ? targetProduct.variants : [];
+
+      // If IMEI device: popup modal instantly
+      if (isImeiProduct(targetProduct, targetVariant)) {
+        const initialStock = Array.isArray(targetProduct.stockItems) ? targetProduct.stockItems : [];
+        setPendingProduct({ ...targetProduct, variants: prodVariants, stockItems: initialStock });
+        setPendingVariantId(targetVariant?._id || undefined);
+        setPendingSerialNumber(undefined);
+        setIsVariantModalLoading(true);
+        setShowVariantModal(true);
+
+        api<any>(`/products/${targetProduct._id}/with-variants`)
+          .then((res) => {
+            if (res && res.status === "success" && res.data) {
+              productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
+              applyWithVariantsData(targetProduct, res.data);
+            }
+          })
+          .catch((err) => {
+            console.error("Error fetching product variants in background:", err);
+          })
+          .finally(() => {
+            setIsVariantModalLoading(false);
+          });
+        return;
+      }
+
+      // Quantity item: instant addition!
+      if (targetVariant) {
+        addToCart(
+          targetProduct,
+          undefined,
+          targetVariant,
+          undefined,
+          targetVariant.sellingPrice || targetVariant.effectivePrice,
+          true
+        );
+        return;
+      }
+
+      if (prodVariants.length === 0) {
+        addToCart(targetProduct, undefined, undefined, undefined, undefined, true);
+        return;
+      }
+
+      if (prodVariants.length === 1) {
+        addToCart(
+          targetProduct,
+          undefined,
+          prodVariants[0],
+          undefined,
+          prodVariants[0].sellingPrice || prodVariants[0].effectivePrice,
+          true
+        );
+        return;
+      }
+
+      // Multiple variants and generic product barcode scanned:
+      const initialStock = Array.isArray(targetProduct.stockItems) ? targetProduct.stockItems : [];
+      setPendingProduct({ ...targetProduct, variants: prodVariants, stockItems: initialStock });
+      setPendingVariantId(undefined);
+      setPendingSerialNumber(undefined);
+      setIsVariantModalLoading(true);
+      setShowVariantModal(true);
+
+      api<any>(`/products/${targetProduct._id}/with-variants`)
+        .then((res) => {
+          if (res && res.status === "success" && res.data) {
+            productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
+            applyWithVariantsData(targetProduct, res.data);
+          }
+        })
+        .catch((err) => {
+          console.error("Error fetching product variants in background:", err);
+        })
+        .finally(() => {
+          setIsVariantModalLoading(false);
+        });
+      return;
+    }
+
+    // =========================================================================
+    // STEP 2: PARALLEL BACKEND LOOKUP (Concurrently queries IMEI, Serial, and Barcode)
+    // =========================================================================
+    try {
+      const isLikelyImei = /^\d{14,16}$/.test(code);
+      let imeiRes: any = null;
+      let serialRes: any = null;
+      let barcodeRes: any = null;
+
+      if (isLikelyImei) {
+        imeiRes = await api<{ status?: string; data?: any }>(`/inventory/lookup/imei/${encodeURIComponent(code)}`).catch(() => null);
+        if (!imeiRes || imeiRes.status !== "success" || !imeiRes.data?.stockItem) {
+          [serialRes, barcodeRes] = await Promise.all([
+            api<{ status?: string; data?: any }>(`/inventory/lookup/serial/${encodeURIComponent(code)}`).catch(() => null),
+            api<{ status?: string; data?: { product?: any; variant?: any } }>(`/products/barcode/${encodeURIComponent(code)}`).catch(() => null)
+          ]);
+        }
+      } else {
+        [barcodeRes, serialRes, imeiRes] = await Promise.all([
+          api<{ status?: string; data?: { product?: any; variant?: any } }>(`/products/barcode/${encodeURIComponent(code)}`).catch(() => null),
+          api<{ status?: string; data?: any }>(`/inventory/lookup/serial/${encodeURIComponent(code)}`).catch(() => null),
+          api<{ status?: string; data?: any }>(`/inventory/lookup/imei/${encodeURIComponent(code)}`).catch(() => null)
+        ]);
+      }
+
+      // 1. Direct IMEI Lookup
       if (imeiRes && imeiRes.status === "success" && imeiRes.data?.stockItem) {
         const stockItem = imeiRes.data.stockItem;
-
-        // Verify if this IMEI is already in cart
-        const alreadyInCart = currentCart.some(
+        const liveCart = cartRef.current || currentCart;
+        const alreadyInCart = liveCart.some(
           (item) =>
-            (item.serialNumber && String(item.serialNumber).toLowerCase() === code.toLowerCase()) ||
+            (item.serialNumber && String(item.serialNumber).trim().toLowerCase() === code.toLowerCase()) ||
             (item.stockItemId && String(item.stockItemId) === String(stockItem._id))
         );
 
@@ -338,33 +641,23 @@ export default function POS(): JSX.Element {
             stockItem.variant,
             stockItem._id,
             stockItem.sellingPrice || stockItem.variant?.sellingPrice,
-            true // skipSerial modal
+            true
           );
-          showSuccess(`Added "${baseProduct.name}" (IMEI: ${code})`);
           return;
         }
       }
-    } catch (err) {
-      console.error("Error during IMEI lookup:", err);
-    }
 
-    // 2. Serial Number Lookup -> When scanned a serial number, pop up comes showing all the variants that are in that serial number!
-    try {
-      const serialRes = await api<{ status?: string; data?: any }>(
-        `/inventory/lookup/serial/${encodeURIComponent(code)}`
-      ).catch(() => null);
-
+      // 2. Serial Number Lookup
       if (serialRes && serialRes.status === "success" && serialRes.data) {
         const data = serialRes.data;
         const stockItem = data.stockItem;
 
-        // Case 2A: StockItem / SerialNumber matched
         if (data.isSerialNumber === true && stockItem) {
           const itemProductId = stockItem.product?._id || stockItem.product || stockItem.stock?.product;
-          let targetProduct = currentProducts.find((p) => String(p._id) === String(itemProductId));
+          let targetProd = currentProducts.find((p) => String(p._id) === String(itemProductId));
 
-          if (!targetProduct && stockItem.product) {
-            targetProduct = {
+          if (!targetProd && stockItem.product) {
+            targetProd = {
               _id: String(itemProductId),
               name: stockItem.product.name || "Product",
               sku: stockItem.product.sku || stockItem.product.itemCode,
@@ -377,35 +670,47 @@ export default function POS(): JSX.Element {
             };
           }
 
-          if (targetProduct) {
+          if (targetProd) {
+            const isImei = isImeiProduct(targetProd, stockItem.variant);
+            const liveCart = cartRef.current || currentCart;
+
+            // Only block duplicate for unique IMEI devices; bulk items will increment quantity in addToCart!
+            if (isImei) {
+              const alreadyInCart = liveCart.some(
+                (item) =>
+                  (item.serialNumber && String(item.serialNumber).trim().toLowerCase() === code.toLowerCase()) ||
+                  (item.stockItemId && String(item.stockItemId) === String(stockItem._id))
+              );
+              if (alreadyInCart) {
+                showError(`Item with IMEI "${code}" is already in the cart!`);
+                return;
+              }
+            }
+
             const serialVariants: any[] = Array.isArray(data.variants) && data.variants.length > 0
               ? data.variants
               : (stockItem.variant ? [stockItem.variant] : []);
 
             if (serialVariants.length > 1) {
-              // Scanned a batch serial number with multiple variants: pop up comes showing all variants
-              setPendingProduct({ ...targetProduct, variants: serialVariants });
+              setPendingProduct({ ...targetProd, variants: serialVariants });
               setPendingVariantId(serialVariants[0]?._id);
               setPendingSerialNumber(code);
               setShowVariantModal(true);
               return;
             } else {
-              // Single variant or non-variant product: auto-add to cart!
               addToCart(
-                targetProduct,
+                targetProd,
                 code,
                 serialVariants[0] || stockItem.variant,
                 stockItem._id,
                 stockItem.sellingPrice,
                 true
               );
-              showSuccess(`Added "${targetProduct.name}" (${code})`);
               return;
             }
           }
         }
 
-        // Case 2B: Product matched by barcode/sku/itemCode in serial lookup
         if (data.isSerialNumber === false && data.product) {
           const p = data.product;
           const variants = data.variants || p.variants || [];
@@ -439,61 +744,21 @@ export default function POS(): JSX.Element {
           }
         }
       }
+
+      // 3. Direct Barcode Lookup (Product / Variant barcode from backend)
+      if (barcodeRes && barcodeRes.status === "success" && barcodeRes.data?.product) {
+        targetProduct = barcodeRes.data.product;
+        if (barcodeRes.data.variant) {
+          targetVariant = barcodeRes.data.variant;
+        }
+      }
     } catch (err) {
-      console.error("Error during serial lookup:", err);
+      console.error("Error during parallel IMEI/Serial/Barcode lookup:", err);
     }
 
-    // 3. Barcode / SKU / ItemCode Scan -> Scanned items automatically add into cart!
-    let targetProduct: any = null;
-    let targetVariant: any = null;
-
-    // A. Check if the scanned code matches a specific variant's itemCode, barcode, or sku in loaded products
-    for (const p of currentProducts) {
-      if (p.variants && Array.isArray(p.variants)) {
-        const matchingVariant = p.variants.find(
-          (v: any) =>
-            (v.itemCode && String(v.itemCode).trim().toLowerCase() === code.toLowerCase()) ||
-            (v.barcode && String(v.barcode).trim().toLowerCase() === code.toLowerCase()) ||
-            (v.sku && String(v.sku).trim().toLowerCase() === code.toLowerCase()) ||
-            (v._id && String(v._id).toLowerCase() === code.toLowerCase())
-        );
-        if (matchingVariant) {
-          targetProduct = p;
-          targetVariant = matchingVariant;
-          break;
-        }
-      }
-    }
-
-    // B. Check if code matches a product's barcode, sku, or itemCode in loaded products
-    if (!targetProduct) {
-      targetProduct = currentProducts.find(
-        (p: any) =>
-          (p.barcode && String(p.barcode).trim().toLowerCase() === code.toLowerCase()) ||
-          (p.sku && String(p.sku).trim().toLowerCase() === code.toLowerCase()) ||
-          (p.itemCode && String(p.itemCode).trim().toLowerCase() === code.toLowerCase())
-      );
-    }
-
-    // C. Query backend by barcode endpoint if still not found
-    if (!targetProduct) {
-      try {
-        const barcodeRes = await api<{ status?: string; data?: { product?: any; variant?: any } }>(
-          `/products/barcode/${encodeURIComponent(code)}`
-        ).catch(() => null);
-
-        if (barcodeRes && barcodeRes.status === "success" && barcodeRes.data?.product) {
-          targetProduct = barcodeRes.data.product;
-          if (barcodeRes.data.variant) {
-            targetVariant = barcodeRes.data.variant;
-          }
-        }
-      } catch (err) {
-        console.error("Error fetching product by barcode:", err);
-      }
-    }
-
-    // D. Query backend search if still not found
+    // =========================================================================
+    // STEP 3: FALLBACK TO BACKEND SEARCH (Only if all direct lookups yielded nothing)
+    // =========================================================================
     if (!targetProduct) {
       try {
         const prodRes = await api<{ status?: string; data?: { products?: any[] } }>(
@@ -504,100 +769,31 @@ export default function POS(): JSX.Element {
           targetProduct = prodRes.data.products[0];
         }
       } catch (err) {
-        console.error("Error searching products by query:", err);
+        console.error("Error fetching fallback product:", err);
       }
     }
 
-    // If product found:
     if (targetProduct) {
       const prodVariants = Array.isArray(targetProduct.variants) ? targetProduct.variants : [];
-
-      // If this product is an IMEI product: ALWAYS popup VariantSelectionModal to scan/select IMEI
       if (isImeiProduct(targetProduct, targetVariant)) {
-        const initialStock = Array.isArray(targetProduct.stockItems) ? targetProduct.stockItems : [];
-        setPendingProduct({ ...targetProduct, variants: prodVariants, stockItems: initialStock });
+        setPendingProduct({ ...targetProduct, variants: prodVariants });
         setPendingVariantId(targetVariant?._id || undefined);
-        setPendingSerialNumber(undefined);
-        setIsVariantModalLoading(true);
         setShowVariantModal(true);
-
-        api<any>(`/products/${targetProduct._id}/with-variants`)
-          .then((res) => {
-            if (res && res.status === "success" && res.data) {
-              productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
-              applyWithVariantsData(targetProduct, res.data);
-            }
-          })
-          .catch((err) => {
-            console.error("Error fetching product variants in background:", err);
-          })
-          .finally(() => {
-            setIsVariantModalLoading(false);
-          });
         return;
       }
-
-      // QUANTITY PRODUCT:
-      // 1. If scanned a specific variant barcode/SKU -> AUTO-ADD DIRECTLY TO CART!
-      if (targetVariant) {
-        addToCart(
-          targetProduct,
-          undefined,
-          targetVariant,
-          undefined,
-          targetVariant.sellingPrice || targetVariant.effectivePrice,
-          true
-        );
-        showSuccess(`Added "${targetProduct.name}" (${formatVariantDisplay(targetVariant) || ''})`);
-        return;
-      }
-
-      // 2. If product has NO variants -> AUTO-ADD DIRECTLY TO CART!
-      if (prodVariants.length === 0) {
-        addToCart(targetProduct, undefined, undefined, undefined, undefined, true);
-        showSuccess(`Added "${targetProduct.name}"`);
-        return;
-      }
-
-      // 3. If product has only 1 variant -> AUTO-ADD DIRECTLY TO CART!
-      if (prodVariants.length === 1) {
-        addToCart(
-          targetProduct,
-          undefined,
-          prodVariants[0],
-          undefined,
-          prodVariants[0].sellingPrice || prodVariants[0].effectivePrice,
-          true
-        );
-        showSuccess(`Added "${targetProduct.name}"`);
-        return;
-      }
-
-      // 4. Multiple variants and generic product barcode scanned:
-      const initialStock = Array.isArray(targetProduct.stockItems) ? targetProduct.stockItems : [];
-      setPendingProduct({ ...targetProduct, variants: prodVariants, stockItems: initialStock });
-      setPendingVariantId(undefined);
-      setPendingSerialNumber(undefined);
-      setIsVariantModalLoading(true);
-      setShowVariantModal(true);
-
-      api<any>(`/products/${targetProduct._id}/with-variants`)
-        .then((res) => {
-          if (res && res.status === "success" && res.data) {
-            productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
-            applyWithVariantsData(targetProduct, res.data);
-          }
-        })
-        .catch((err) => {
-          console.error("Error fetching product variants in background:", err);
-        })
-        .finally(() => {
-          setIsVariantModalLoading(false);
-        });
+      addToCart(
+        targetProduct,
+        undefined,
+        targetVariant || prodVariants[0] || undefined,
+        undefined,
+        targetVariant?.sellingPrice || targetProduct.sellingPrice,
+        true
+      );
+      showSuccess(`Added "${targetProduct.name}"`);
       return;
     }
 
-    // If not found in the database at all, display error message
+    // If not found in database at all
     showError(`Invalid barcode, Serial, or IMEI not found: "${code}"`);
   };
 
@@ -609,19 +805,19 @@ export default function POS(): JSX.Element {
     const hasCachedData = productsRef.current.length > 0;
     fetchData(hasCachedData);
 
-    // Silent background sync every 10 seconds (no UI flicker or spinner)
+    // Silent background sync every 60 seconds (no UI flicker or spinner)
     const interval = setInterval(() => {
       fetchData(true);
-    }, 10000);
+    }, 60000);
 
-    // Immediate background sync when POS window/tab regains focus or visibility (throttled to 10s)
+    // Immediate background sync when POS window/tab regains focus or visibility (throttled to 15s)
     const handleFocus = () => {
-      if (Date.now() - lastFetchTimeRef.current > 10000) {
+      if (Date.now() - lastFetchTimeRef.current > 15000) {
         fetchData(true);
       }
     };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible" && Date.now() - lastFetchTimeRef.current > 10000) {
+      if (document.visibilityState === "visible" && Date.now() - lastFetchTimeRef.current > 15000) {
         fetchData(true);
       }
     };
@@ -648,7 +844,7 @@ export default function POS(): JSX.Element {
 
     const interval = setInterval(() => {
       fetchRepairs(true);
-    }, 5000); // 5 seconds
+    }, 20000); // 20 seconds
 
     return () => clearInterval(interval);
   }, [canViewRepairs]);
@@ -760,7 +956,7 @@ export default function POS(): JSX.Element {
               searchInputRef.current.blur();
             }
           }
-          processScannedBarcode(scannedCode);
+          processScannedBarcodeRef.current(scannedCode);
         }
       } else if (e.key.length === 1) {
         barcodeBufferRef.current += e.key;
@@ -788,14 +984,23 @@ export default function POS(): JSX.Element {
   // Keyboard shortcuts handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger shortcuts when typing in input fields
+      const shortcuts = getKeyboardShortcuts();
+      const key = e.key.toUpperCase();
+
+      // F2 (focusSearch) works globally — even if an input is focused
+      // This allows the user to jump to the search bar from anywhere
+      if (key === shortcuts.focusSearch.toUpperCase()) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+
+      // Don't trigger other shortcuts when typing in input fields
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
         return;
       }
-
-      const shortcuts = getKeyboardShortcuts();
-      const key = e.key.toUpperCase();
 
       if (key === shortcuts.payNow.toUpperCase() && cart.length > 0) {
         e.preventDefault();
@@ -814,9 +1019,6 @@ export default function POS(): JSX.Element {
         e.preventDefault();
         setShowSalesPanel(true);
         fetchSalesData();
-      } else if (key === shortcuts.focusSearch.toUpperCase()) {
-        e.preventDefault();
-        searchInputRef.current?.focus();
       } else if (key === shortcuts.logout.toUpperCase()) {
         e.preventDefault();
         handleLogout();
@@ -848,7 +1050,47 @@ export default function POS(): JSX.Element {
           memoryProductsCache = prodData.data.products;
           setProducts(prodData.data.products);
           try {
-            localStorage.setItem("pos_products_cache", JSON.stringify(prodData.data.products));
+            const cleanProducts = prodData.data.products.map((p: any) => ({
+              _id: p._id,
+              name: p.name,
+              itemCode: p.itemCode,
+              barcode: p.barcode,
+              sku: p.sku,
+              serialNumber: p.serialNumber,
+              serialNumbers: p.serialNumbers,
+              imeis: p.imeis,
+              sellingPrice: p.sellingPrice,
+              originalPrice: p.originalPrice,
+              minVariantPrice: p.minVariantPrice,
+              costPrice: p.costPrice,
+              stock: p.stock,
+              trackingType: p.trackingType,
+              warrantyDuration: p.warrantyDuration,
+              warrantyType: p.warrantyType,
+              condition: p.condition,
+              category: p.category ? { _id: p.category._id, name: p.category.name } : undefined,
+              images: Array.isArray(p.images) && p.images.length > 0 ? [p.images[0]] : [],
+              stockItems: Array.isArray(p.stockItems) ? p.stockItems.map((si: any) => ({
+                _id: si._id,
+                variant: si.variant,
+                serialNumber: si.serialNumber,
+                imei1: si.imei1,
+                imei2: si.imei2,
+                sellingPrice: si.sellingPrice,
+              })) : [],
+              variants: Array.isArray(p.variants) ? p.variants.map((v: any) => ({
+                _id: v._id,
+                itemCode: v.itemCode,
+                barcode: v.barcode,
+                sku: v.sku,
+                sellingPrice: v.sellingPrice,
+                effectivePrice: v.effectivePrice,
+                originalPrice: v.originalPrice,
+                stock: v.stock,
+                attributes: v.attributes,
+              })) : []
+            }));
+            localStorage.setItem("pos_products_cache", JSON.stringify(cleanProducts));
           } catch (e) {}
         }
       });
@@ -1436,18 +1678,6 @@ export default function POS(): JSX.Element {
       return;
     }
 
-    // Check stock: for variants check variant stock (with fallback to product stock), otherwise check product stock
-    const effectiveStock = stockItemId
-      ? Math.max(1, (variant?.stock ?? variant?.stockQty ?? product?.stock ?? 1))
-      : (variant
-        ? (variant.stock ?? variant.stockQty ?? product?.stock ?? 0)
-        : (product?.stock ?? 0));
-
-    if (effectiveStock <= 0) {
-      showError(variant ? "Selected variant is out of stock!" : "Product is out of stock!");
-      return;
-    }
-
     const effectivePrice = stockItemPrice !== undefined ? stockItemPrice : (variant?.effectivePrice ?? product.effectivePrice ?? variant?.sellingPrice ?? product.sellingPrice ?? 0);
     const rawOrig = Number(variant?.originalPrice ?? product.originalPrice ?? 0);
     const discAmount = Number(variant?.discountAmount ?? product.discountAmount ?? 0);
@@ -1461,85 +1691,132 @@ export default function POS(): JSX.Element {
     const discountAmount = Math.max(0, originalPrice - effectivePrice) || discAmount;
     const itemPrice = originalPrice;
 
-    const formatVariantDisplay = (v: any) => {
-      if (!v) return undefined;
-      if (Array.isArray(v.attributes) && v.attributes.length > 0) {
-        return v.attributes
-          .map((a: any) => (typeof a === "object" ? (a.value || a.name || "") : String(a)))
-          .filter(Boolean)
-          .join(" - ");
-      }
-      return v.itemCode || v.sku || undefined;
-    };
+    const trimmedSerial = serialNumber ? String(serialNumber).trim() : undefined;
 
-    if (serialNumber || (isImei && stockItemId)) {
-      // For warranty / IMEI products, each unit needs a unique serial number / IMEI
-      if (serialNumber) {
-        const serialExists = cart.some(
-          (item) =>
-            (item.serialNumber && item.serialNumber.toLowerCase() === serialNumber.toLowerCase()) ||
-            (stockItemId && item.stockItemId === stockItemId)
-        );
-        if (serialExists) {
-          showError("This serial number / IMEI is already in the cart!");
-          return;
+    if (isImei) {
+      // -----------------------------------------------------------------------
+      // IMEI / Mobile Phone Branch:
+      // Each physical phone is a distinct item in the cart with quantity: 1.
+      // Scanning multiple IMEIs of the same phone model adds each as a separate
+      // cart line, displaying its true variant attributes.
+      // -----------------------------------------------------------------------
+      const availableStock = stockItemId
+        ? Math.max(1, (variant?.stock ?? variant?.stockQty ?? product?.stock ?? 1))
+        : (variant ? (variant.stock ?? variant.stockQty ?? product?.stock ?? 0) : (product?.stock ?? 0));
+
+      if (availableStock <= 0) {
+        showError(variant ? "Selected variant is out of stock!" : "Product is out of stock!");
+        return;
+      }
+
+      setCart((prevCart) => {
+        // Prevent scanning the exact same IMEI or physical device twice
+        if (trimmedSerial) {
+          const serialExists = prevCart.some(
+            (item) =>
+              (item.serialNumber && item.serialNumber.trim().toLowerCase() === trimmedSerial.toLowerCase()) ||
+              (stockItemId && item.stockItemId && String(item.stockItemId) === String(stockItemId))
+          );
+          if (serialExists) {
+            showError(`Item with IMEI "${trimmedSerial}" is already in the cart!`);
+            return prevCart;
+          }
+        } else if (stockItemId) {
+          const stockExists = prevCart.some(
+            (item) => item.stockItemId && String(item.stockItemId) === String(stockItemId)
+          );
+          if (stockExists) {
+            showError("This device is already in the cart!");
+            return prevCart;
+          }
         }
-      }
 
-      setCart([
-        ...cart,
-        {
+        const newItem: CartItem = {
           ...product,
           sellingPrice: itemPrice,
           originalPrice: originalPrice,
           effectivePrice: effectivePrice,
           discountAmount: discountAmount,
           quantity: 1,
-          serialNumber,
+          serialNumber: trimmedSerial,
           variantId: variant?._id,
-          trackingType: variant?.trackingType || product.trackingType || (isImei ? "IMEI" : "QUANTITY"),
+          trackingType: "IMEI",
           variantDisplay: formatVariantDisplay(variant),
           stockItemId: stockItemId,
-        },
-      ]);
-    } else {
-      // Non-warranty / Quantity product - match by product id and variantId
-      const existing = cart.find(
-        (item) => item._id === product._id && item.variantId === variant?._id && !item.serialNumber
-      );
+        };
 
-      if (existing) {
-        const availableStock = variant?.stock ?? (product?.stock ?? 0);
-        if (availableStock > 0 && existing.quantity >= availableStock) {
-          showError(`Only ${availableStock} available!`);
-          return;
-        }
-        setCart(
-          cart.map((item) =>
-            item === existing
-              ? { ...item, quantity: item.quantity + 1 }
-              : item
-          )
-        );
-      } else {
-        setCart([
-          ...cart,
-          {
+        const nextCart = [...prevCart, newItem];
+        cartRef.current = nextCart;
+        showSuccess(`Added "${product.name || "phone"}" (IMEI: ${trimmedSerial || "assigned"})`);
+        return nextCart;
+      });
+    } else {
+      // -----------------------------------------------------------------------
+      // Quantity / Bulk Branch (e.g. Back Covers, Tempered Glass, Accessories):
+      // Scanning an existing item increases its quantity.
+      // Validates available stock before incrementing.
+      // -----------------------------------------------------------------------
+      setCart((prevCart) => {
+        const existingIndex = prevCart.findIndex((item) => {
+          if (item._id !== product._id) return false;
+          const vMatch = variant?._id ? item.variantId === variant._id : !item.variantId;
+          if (!vMatch) return false;
+          if (trimmedSerial && item.serialNumber && item.serialNumber.trim().toLowerCase() !== trimmedSerial.toLowerCase()) {
+            return false;
+          }
+          return true;
+        });
+
+        const availableStock = variant
+          ? (variant.stock ?? variant.stockQty ?? product?.stock ?? 0)
+          : (product?.stock ?? 0);
+
+        if (existingIndex >= 0) {
+          const existing = prevCart[existingIndex];
+          if (availableStock <= 0) {
+            showError(variant ? "Selected variant is out of stock!" : `"${product.name}" is out of stock!`);
+            return prevCart;
+          }
+          if (availableStock > 0 && existing.quantity + 1 > availableStock) {
+            showError(`Only ${availableStock} available in stock!`);
+            return prevCart;
+          }
+
+          const nextCart = [...prevCart];
+          nextCart[existingIndex] = {
+            ...existing,
+            quantity: existing.quantity + 1,
+          };
+          cartRef.current = nextCart;
+          showSuccess(`Updated "${product.name}" quantity to ${existing.quantity + 1}`);
+          return nextCart;
+        } else {
+          if (availableStock <= 0) {
+            showError(variant ? "Selected variant is out of stock!" : `"${product.name}" is out of stock!`);
+            return prevCart;
+          }
+
+          const newItem: CartItem = {
             ...product,
             sellingPrice: itemPrice,
             originalPrice: originalPrice,
             effectivePrice: effectivePrice,
             discountAmount: discountAmount,
             quantity: 1,
+            serialNumber: trimmedSerial,
             variantId: variant?._id,
             trackingType: variant?.trackingType || product.trackingType || "QUANTITY",
             variantDisplay: formatVariantDisplay(variant),
             stockItemId: stockItemId,
-          },
-        ]);
-      }
+          };
+
+          const nextCart = [...prevCart, newItem];
+          cartRef.current = nextCart;
+          showSuccess(`Added "${product.name || "item"}" to order`);
+          return nextCart;
+        }
+      });
     }
-    showSuccess(`Added "${product.name || "item"}" to order`);
   };
 
 
@@ -1567,23 +1844,40 @@ export default function POS(): JSX.Element {
     if (quantity < 1) {
       showError("Quantity cannot be less than 1");
       return;
-    } else {
-      // For items with serial number, don't allow quantity > 1
-      if (serialNumber && quantity > 1) {
-        showError("Each item with serial number must have quantity of 1");
-        return;
-      }
-      const product = products.find((p) => p._id === productId);
-      if (quantity > (product?.stock ?? 0)) {
-        showError(`Only ${product?.stock} available!`);
-        return;
-      }
-      setCart(
-        cart.map((item) =>
-          getCartItemKey(item) === itemKey ? { ...item, quantity } : item,
-        ),
-      );
     }
+
+    const currentCart = cartRef.current || cart;
+    const item = currentCart.find((it) => getCartItemKey(it) === itemKey);
+    const isImei = item ? isImeiProduct(item) : false;
+
+    // For IMEI items, each unit must have quantity 1
+    if (isImei && quantity > 1) {
+      showError("Each item with IMEI must have quantity of 1");
+      return;
+    }
+
+    // Check available stock
+    const product = (productsRef.current || products).find((p) => p._id === productId);
+    let availableStock = product?.stock ?? 0;
+    if (item?.variantId && product?.variants) {
+      const v = product.variants.find((vr: any) => vr._id === item.variantId);
+      if (v?.stock !== undefined) {
+        availableStock = v.stock;
+      }
+    }
+
+    if (availableStock > 0 && quantity > availableStock) {
+      showError(`Only ${availableStock} available!`);
+      return;
+    }
+
+    setCart((prev) => {
+      const next = prev.map((it) =>
+        getCartItemKey(it) === itemKey ? { ...it, quantity } : it
+      );
+      cartRef.current = next;
+      return next;
+    });
   };
 
   const removeFromCart = (
@@ -1598,6 +1892,7 @@ export default function POS(): JSX.Element {
         if (removed?._id === "return-credit") {
           setExchangePayload(null);
         }
+        cartRef.current = next;
         return next;
       });
       return;
@@ -1605,7 +1900,11 @@ export default function POS(): JSX.Element {
 
     if (typeof itemOrIndexOrId === "object" && itemOrIndexOrId !== null) {
       const targetKey = getCartItemKey(itemOrIndexOrId);
-      setCart((prev) => prev.filter((item) => getCartItemKey(item) !== targetKey));
+      setCart((prev) => {
+        const next = prev.filter((item) => getCartItemKey(item) !== targetKey);
+        cartRef.current = next;
+        return next;
+      });
       if (itemOrIndexOrId._id === "return-credit") {
         setExchangePayload(null);
       }
@@ -1616,7 +1915,11 @@ export default function POS(): JSX.Element {
     let itemKey = productId;
     if (variantId) itemKey += `_${variantId}`;
     if (serialNumber) itemKey += `_${serialNumber}`;
-    setCart((prev) => prev.filter((item) => getCartItemKey(item) !== itemKey));
+    setCart((prev) => {
+      const next = prev.filter((item) => getCartItemKey(item) !== itemKey);
+      cartRef.current = next;
+      return next;
+    });
 
     if (productId === "return-credit") {
       setExchangePayload(null);
@@ -1625,6 +1928,7 @@ export default function POS(): JSX.Element {
 
   const clearCart = (): void => {
     setCart([]);
+    cartRef.current = [];
     setExchangePayload(null);
   };
 
@@ -1740,10 +2044,10 @@ export default function POS(): JSX.Element {
       )}
 
       {/* 1. Left Dark Sidebar (Categories) */}
-      <aside className="w-56 bg-[#0f172a] text-slate-300 flex flex-col shrink-0 h-full overflow-hidden border-r border-slate-800/80 z-10">
+      <aside className="w-48 xl:w-52 2xl:w-56 bg-[#0f172a] text-slate-300 flex flex-col shrink-0 h-full overflow-hidden border-r border-slate-800/80 z-10">
         {/* Logo & Brand Header */}
-        <div className="flex items-center gap-3 p-4 border-b border-slate-800/80 shrink-0">
-          <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 shadow-md shadow-sky-500/10 overflow-hidden border border-slate-700/60">
+        <div className="flex items-center gap-2.5 p-3 xl:p-4 border-b border-slate-800/80 shrink-0">
+          <div className="w-8 h-8 xl:w-9 xl:h-9 rounded-lg xl:rounded-xl bg-white p-1 flex items-center justify-center shrink-0 shadow-md shadow-sky-500/10 overflow-hidden border border-slate-700/60">
             <img
               src={companyIcon}
               alt="Hotline Cellular Logo"
@@ -1754,34 +2058,34 @@ export default function POS(): JSX.Element {
             />
           </div>
           <div className="min-w-0">
-            <h1 className="text-sm font-extrabold text-white tracking-tight leading-snug">
+            <h1 className="text-xs xl:text-sm font-extrabold text-white tracking-tight leading-snug">
               Hotline POS
             </h1>
-            <p className="text-[9px] text-slate-400 font-bold tracking-wider uppercase">
+            <p className="text-[8.5px] xl:text-[9px] text-slate-400 font-bold tracking-wider uppercase">
               POINT OF SALE
             </p>
           </div>
         </div>
 
         {/* Categories Section Title */}
-        <div className="px-4 pt-4 pb-2 shrink-0">
-          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+        <div className="px-3 pt-3 pb-1.5 shrink-0">
+          <span className="text-[9px] xl:text-[10px] font-bold tracking-wider text-slate-400 uppercase">
             CATEGORIES
           </span>
         </div>
 
         {/* Categories Scrollable Nav */}
-        <nav className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+        <nav className="flex-1 overflow-y-auto px-2.5 pb-2.5 space-y-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
           {/* All Products Button */}
           <button
             onClick={() => handleParentCategoryClick(null)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs font-semibold transition-all cursor-pointer ${
+            className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs font-semibold transition-all cursor-pointer ${
               !selectedParentCategory
                 ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
                 : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
             }`}
           >
-            <Layers className={`w-4 h-4 shrink-0 ${!selectedParentCategory ? "text-white" : "text-blue-400"}`} />
+            <Layers className={`w-3.5 h-3.5 shrink-0 ${!selectedParentCategory ? "text-white" : "text-blue-400"}`} />
             <span className="flex-1 truncate">All Products</span>
           </button>
 
@@ -1792,19 +2096,19 @@ export default function POS(): JSX.Element {
               <div key={cat._id}>
                 <button
                   onClick={() => handleParentCategoryClick(cat._id)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs font-medium transition-all cursor-pointer group ${
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs font-medium transition-all cursor-pointer group ${
                     isParentActive
                       ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
                       : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
                   }`}
                 >
                   <span className={`shrink-0 ${isParentActive ? "text-white" : "text-slate-400 group-hover:text-slate-200"}`}>
-                    {getCategoryIcon(cat.name, "w-4 h-4")}
+                    {getCategoryIcon(cat.name, "w-3.5 h-3.5")}
                   </span>
                   <span className="flex-1 truncate text-xs">{cat.name}</span>
                   {cat.subcategories && cat.subcategories.length > 0 && (
                     <svg
-                      className={`w-3.5 h-3.5 text-slate-500 transition-transform ${
+                      className={`w-3 h-3 text-slate-500 transition-transform ${
                         isParentActive ? "rotate-90 text-white" : ""
                       }`}
                       fill="none"
@@ -1820,7 +2124,7 @@ export default function POS(): JSX.Element {
                 <div
                   className={`overflow-hidden transition-all duration-200 ${
                     isParentActive && cat.subcategories && cat.subcategories.length > 0
-                      ? "max-h-96 opacity-100 mt-1 pl-3 space-y-1"
+                      ? "max-h-96 opacity-100 mt-1 pl-2.5 space-y-0.5"
                       : "max-h-0 opacity-0"
                   }`}
                 >
@@ -1830,7 +2134,7 @@ export default function POS(): JSX.Element {
                       <button
                         key={sub._id}
                         onClick={() => handleSubCategoryClick(sub._id)}
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs transition-all cursor-pointer ${
+                        className={`w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-left text-[11px] transition-all cursor-pointer ${
                           isSubActive
                             ? "bg-blue-500/20 text-sky-400 font-bold border-l-2 border-sky-400"
                             : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
@@ -1846,35 +2150,16 @@ export default function POS(): JSX.Element {
             );
           })}
         </nav>
-
-        {/* Down-Left Corner: Hardware Scanner Section */}
-        <div className="bg-white border-t border-slate-200 p-4 shrink-0">
-          <div className="flex items-center gap-2 mb-1.5">
-            <div className="flex items-center gap-0.5 shrink-0 text-blue-600" aria-hidden="true">
-              <span className="w-1 h-3.5 bg-blue-600 rounded-xs inline-block"></span>
-              <span className="w-[1.5px] h-3.5 bg-blue-600 rounded-xs inline-block"></span>
-              <span className="w-[3px] h-3.5 bg-blue-600 rounded-xs inline-block"></span>
-              <span className="w-[1.5px] h-3.5 bg-blue-600 rounded-xs inline-block"></span>
-              <span className="w-1 h-3.5 bg-blue-600 rounded-xs inline-block"></span>
-            </div>
-            <span className="text-xs font-bold text-[#1e3a8a] tracking-tight">
-              Hardware Scanner Ready
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-500 leading-snug">
-            Scan any IMEI barcode to verify &amp; add directly to order.
-          </p>
-        </div>
       </aside>
 
       {/* 2. Main Work Area (Top Header + Product Catalog + Cart) */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-[#f0f4f9]">
         {/* Top Header Bar */}
-        <header className="px-4 pt-3 pb-2 flex items-center justify-between gap-2.5 shrink-0">
+        <header className="px-3 xl:px-4 pt-2.5 pb-2 flex items-center justify-between gap-2 shrink-0">
           {/* Search Input with Scanner Icon */}
-          <div className="relative flex-1 max-w-sm xl:max-w-md">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="relative flex-1 max-w-xs xl:max-w-sm 2xl:max-w-md">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
@@ -1891,25 +2176,25 @@ export default function POS(): JSX.Element {
                   if (searchInputRef.current) {
                     searchInputRef.current.blur();
                   }
-                  processScannedBarcode(code);
+                  processScannedBarcodeRef.current(code);
                 }
               }}
-              placeholder="Search products, SKU, Serial, IMEI, or scan barcode..."
-              className="w-full pl-10 pr-10 py-2 bg-white border border-slate-200/90 rounded-full text-slate-900 font-medium placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-xs shadow-2xs"
+              placeholder="Search products, SKU, IMEI (F2)..."
+              className="w-full pl-9 pr-9 py-1.5 bg-white border border-slate-200/90 rounded-full text-slate-900 font-medium placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-xs shadow-2xs"
               style={{ color: '#0f172a' }}
             />
             {searchQuery ? (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             ) : (
-              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none text-slate-400">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 7h1v10H7V7zm4 0h2v10h-2V7zm5 0h1v10h-1V7z" />
                 </svg>
               </div>
@@ -1917,12 +2202,12 @@ export default function POS(): JSX.Element {
           </div>
 
           {/* Center Pill Action Buttons */}
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+          <div className="flex items-center gap-1 xl:gap-1.5 overflow-x-auto scrollbar-none py-0.5">
             {/* Print Today's Sales */}
             <button
               onClick={handlePrintTodaySales}
               disabled={printingTodaySales}
-              className="flex items-center justify-center w-8 h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
+              className="flex items-center justify-center w-7 h-7 xl:w-8 xl:h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg xl:rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
               title="Print Today's Sales (12:00 AM - Now)"
             >
               {printingTodaySales ? (
@@ -1941,7 +2226,7 @@ export default function POS(): JSX.Element {
             <button
               onClick={() => fetchData()}
               disabled={loading}
-              className="flex items-center justify-center w-8 h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
+              className="flex items-center justify-center w-7 h-7 xl:w-8 xl:h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg xl:rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
               title="Refresh Data"
             >
               <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1952,10 +2237,10 @@ export default function POS(): JSX.Element {
             {/* Request Item */}
             <button
               onClick={() => setShowCustomerRequestModal(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#fef9ee] hover:bg-[#fef3c7] text-[#b45309] border border-[#fde68a] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#fef9ee] hover:bg-[#fef3c7] text-[#b45309] border border-[#fde68a] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
               title="Customer Product Request"
             >
-              <svg className="w-3.5 h-3.5 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
               </svg>
               <span>Request Item</span>
@@ -1964,10 +2249,10 @@ export default function POS(): JSX.Element {
             {/* SIM & Reload */}
             <button
               onClick={() => setShowSimReloadPanel(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] border border-[#bfdbfe] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] border border-[#bfdbfe] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
               title="SIM Cards & Mobile Reload"
             >
-              <svg className="w-3.5 h-3.5 text-[#2563eb]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-[#2563eb]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM12 11h.01M9 11h.01M15 11h.01M12 14h.01M9 14h.01M15 14h.01" />
               </svg>
               <span>SIM & Reload</span>
@@ -1979,10 +2264,10 @@ export default function POS(): JSX.Element {
                 setShowSalesPanel(true);
                 fetchSalesData();
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f0fdf4] hover:bg-[#dcfce7] text-[#16a34a] border border-[#bbf7d0] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#f0fdf4] hover:bg-[#dcfce7] text-[#16a34a] border border-[#bbf7d0] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
               title="Sales Reports"
             >
-              <svg className="w-3.5 h-3.5 text-[#16a34a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-[#16a34a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
               <span>Sales</span>
@@ -1995,10 +2280,10 @@ export default function POS(): JSX.Element {
                   setShowRepairsPanel(true);
                   fetchRepairs();
                 }}
-                className="relative flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f8fafc] hover:bg-[#f1f5f9] text-[#475569] border border-[#e2e8f0] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+                className="relative flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#f8fafc] hover:bg-[#f1f5f9] text-[#475569] border border-[#e2e8f0] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
                 title="Repairs"
               >
-                <svg className="w-3.5 h-3.5 text-[#475569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3 h-3 text-[#475569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
@@ -2007,7 +2292,7 @@ export default function POS(): JSX.Element {
                   const s = (r.status || "").toUpperCase().trim();
                   return s !== "CANCELLED" && s !== "COMPLETED";
                 }).length > 0 && (
-                  <span className="w-4 h-4 bg-blue-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center -ml-0.5">
+                  <span className="w-3.5 h-3.5 bg-blue-600 text-white text-[8.5px] font-bold rounded-full flex items-center justify-center -ml-0.5">
                     {repairs.filter((r) => {
                       const s = (r.status || "").toUpperCase().trim();
                       return s !== "CANCELLED" && s !== "COMPLETED";
@@ -2020,10 +2305,10 @@ export default function POS(): JSX.Element {
             {/* Expenses */}
             <button
               onClick={() => setShowExpensesPanel(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#fff7ed] hover:bg-[#ffedd5] text-[#ea580c] border border-[#fed7aa] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+              className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#fff7ed] hover:bg-[#ffedd5] text-[#ea580c] border border-[#fed7aa] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
               title="Expenses"
             >
-              <svg className="w-3.5 h-3.5 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h3m-9 5h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               <span>Expenses</span>
@@ -2033,10 +2318,10 @@ export default function POS(): JSX.Element {
             {canProcessReturn && (
               <button
                 onClick={() => setShowReturnsPanel(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f0f9ff] hover:bg-[#e0f2fe] text-[#0284c7] border border-[#bae6fd] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+                className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#f0f9ff] hover:bg-[#e0f2fe] text-[#0284c7] border border-[#bae6fd] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
                 title="Returns"
               >
-                <svg className="w-3.5 h-3.5 text-[#0284c7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3 h-3 text-[#0284c7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
                 </svg>
                 <span>Returns</span>
@@ -2047,10 +2332,10 @@ export default function POS(): JSX.Element {
             {canViewWarranties && (
               <button
                 onClick={() => setShowWarrantyPanel(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#faf5ff] hover:bg-[#f3e8ff] text-[#7e22ce] border border-[#e9d5ff] rounded-xl text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+                className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#faf5ff] hover:bg-[#f3e8ff] text-[#7e22ce] border border-[#e9d5ff] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
                 title="Warranty Lookup"
               >
-                <svg className="w-3.5 h-3.5 text-[#7e22ce]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3 h-3 text-[#7e22ce]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
                 <span>Warranty</span>
@@ -2060,7 +2345,7 @@ export default function POS(): JSX.Element {
             {/* Settings */}
             <button
               onClick={() => navigate("/settings")}
-              className="flex items-center justify-center w-8 h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
+              className="flex items-center justify-center w-7 h-7 xl:w-8 xl:h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg xl:rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
               title="Settings"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2071,25 +2356,35 @@ export default function POS(): JSX.Element {
           </div>
 
           {/* Right User Profile & Connectivity */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 xl:gap-2 shrink-0">
+            {/* Website Direct Login Button */}
+            <button
+              onClick={handleGoToWebsite}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white hover:bg-blue-50/80 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-600 text-[11px] xl:text-xs font-bold transition-all shadow-2xs shrink-0 cursor-pointer"
+              title="Go to Website Admin Panel"
+            >
+              <Globe className="w-3 h-3 text-blue-600" />
+              <span>Website</span>
+            </button>
+
             {/* Online Status */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#f0fdf4] border border-[#bbf7d0] text-[#16a34a] text-xs font-bold shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-[#16a34a] animate-pulse"></span>
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0fdf4] border border-[#bbf7d0] text-[#16a34a] text-[10.5px] font-bold shadow-2xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#16a34a] animate-pulse"></span>
               <span>{isOnline ? "Online" : "Offline"}</span>
             </div>
 
-            <div className="w-px h-6 bg-slate-200 mx-1"></div>
+            <div className="w-px h-5 bg-slate-200 mx-0.5"></div>
 
             {/* User Info */}
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-[#bae6fd] text-[#0369a1] font-extrabold flex items-center justify-center text-xs shadow-2xs">
+            <div className="flex items-center gap-1.5">
+              <div className="w-7 h-7 rounded-full bg-[#bae6fd] text-[#0369a1] font-extrabold flex items-center justify-center text-[11px] shadow-2xs">
                 {(user?.username?.[0] || "C").toUpperCase()}
               </div>
               <div className="text-left hidden lg:block">
-                <p className="text-slate-800 text-xs font-bold leading-tight">
+                <p className="text-slate-800 text-[11px] font-bold leading-tight">
                   {user?.username || "cashier1"}
                 </p>
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                <p className="text-[8px] text-slate-400 font-bold uppercase tracking-wider">
                   {user?.roles?.[0]?.name || "CASHIER"}
                 </p>
               </div>
@@ -2098,10 +2393,10 @@ export default function POS(): JSX.Element {
             {/* Logout */}
             <button
               onClick={handleLogout}
-              className="w-8 h-8 flex items-center justify-center bg-white hover:bg-red-50 text-red-500 border border-slate-200 hover:border-red-200 rounded-xl transition-all shadow-2xs shrink-0 cursor-pointer"
+              className="w-7 h-7 xl:w-8 xl:h-8 flex items-center justify-center bg-white hover:bg-red-50 text-red-500 border border-slate-200 hover:border-red-200 rounded-lg xl:rounded-xl transition-all shadow-2xs shrink-0 cursor-pointer"
               title="Logout"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
@@ -2109,14 +2404,14 @@ export default function POS(): JSX.Element {
         </header>
 
         {/* Catalog + Cart Columns */}
-        <div className="flex-1 flex min-h-0 px-4 pb-3.5 gap-3.5 overflow-hidden">
+        <div className="flex-1 flex min-h-0 px-3 xl:px-4 pb-3 gap-2.5 xl:gap-3.5 overflow-hidden">
           {/* Middle: Product Catalog */}
           <div className="flex-1 flex flex-col min-w-0 bg-transparent overflow-hidden">
             {/* Breadcrumb + Top Pagination Row */}
-            <div className="flex items-center justify-between px-0.5 py-1 shrink-0 mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-slate-500">Showing</span>
-                <span className="px-3 py-1 bg-blue-50 border border-blue-200/60 rounded-full text-blue-600 font-semibold text-xs shadow-2xs">
+            <div className="flex items-center justify-between px-0.5 py-0.5 shrink-0 mb-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] xl:text-xs font-medium text-slate-500">Showing</span>
+                <span className="px-2.5 py-0.5 bg-blue-50 border border-blue-200/60 rounded-full text-blue-600 font-semibold text-[11px] xl:text-xs shadow-2xs">
                   {!selectedParentCategory
                     ? "All Products"
                     : categoryTree.find((c) => c._id === selectedParentCategory)?.name}
@@ -2124,7 +2419,7 @@ export default function POS(): JSX.Element {
                 {selectedSubCategory && (
                   <>
                     <span className="text-slate-400 text-xs">/</span>
-                    <span className="px-3 py-1 bg-sky-50 border border-sky-200/60 rounded-full text-sky-600 font-semibold text-xs shadow-2xs">
+                    <span className="px-2.5 py-0.5 bg-sky-50 border border-sky-200/60 rounded-full text-sky-600 font-semibold text-[11px] xl:text-xs shadow-2xs">
                       {currentSubcategories.find((s) => s._id === selectedSubCategory)?.name}
                     </span>
                   </>
@@ -2139,8 +2434,8 @@ export default function POS(): JSX.Element {
             </div>
 
             {/* Products Grid */}
-            <div ref={productsGridRef} className="flex-1 overflow-y-auto pr-1 pb-4 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent">
-              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+            <div ref={productsGridRef} className="flex-1 overflow-y-auto pr-1 pb-3 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent">
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5 xl:gap-3">
                 {paginatedProducts.map((product) => {
                   const displayPrice = getProductDisplayPrice(product);
                   const originalPrice = getProductOriginalPrice(product, displayPrice);
@@ -2173,18 +2468,18 @@ export default function POS(): JSX.Element {
                   return (
                     <div
                       key={product._id}
-                      className={`bg-white rounded-2xl p-3 border border-slate-200/90 shadow-2xs hover:shadow-xs hover:border-blue-500 transition-all flex flex-col justify-between group ${
+                      className={`bg-white rounded-xl xl:rounded-2xl p-2.5 xl:p-3 border border-slate-200/90 shadow-2xs hover:shadow-xs hover:border-blue-500 transition-all flex flex-col justify-between group ${
                         isOutOfStock ? "opacity-60" : ""
                       }`}
                     >
                       {/* Inner Image Container with Badges & Action */}
-                      <div className="w-full bg-[#f0f4f9] rounded-xl p-2.5 flex flex-col justify-between h-32 sm:h-36 relative overflow-hidden group/img">
+                      <div className="w-full bg-[#f0f4f9] rounded-lg xl:rounded-xl p-2 flex flex-col justify-between h-28 sm:h-30 xl:h-34 relative overflow-hidden group/img">
                         {/* Top Badge & Action Row */}
                         <div className="flex items-center justify-between w-full z-10 gap-1">
-                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                          <div className="flex items-center gap-1 flex-wrap min-w-0">
                             {/* Stock Badge */}
                             <span
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold tracking-tight shadow-2xs ${
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] xl:text-[10px] font-semibold tracking-tight shadow-2xs ${
                                 isOutOfStock
                                   ? "bg-red-50 text-red-600 border border-red-200"
                                   : isLowStock
@@ -2193,7 +2488,7 @@ export default function POS(): JSX.Element {
                               }`}
                             >
                               <span
-                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                                   isOutOfStock ? "bg-red-500" : "bg-[#f59e0b]"
                                 }`}
                               ></span>
@@ -2202,16 +2497,16 @@ export default function POS(): JSX.Element {
 
                             {/* Tracking Type Badge (IMEI / BULK) */}
                             {isImeiProduct(product) ? (
-                              <span className="px-2 py-0.5 bg-[#e0edff] text-[#2563eb] text-[10px] font-extrabold rounded-md uppercase tracking-wider">
+                              <span className="px-1.5 py-0.5 bg-[#e0edff] text-[#2563eb] text-[9px] font-extrabold rounded uppercase tracking-wider">
                                 IMEI
                               </span>
                             ) : (
-                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-extrabold rounded-md uppercase tracking-wider border border-slate-200/60">
+                              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 text-[9px] font-extrabold rounded uppercase tracking-wider border border-slate-200/60">
                                 BULK
                               </span>
                             )}
                             {product.condition && product.condition.toUpperCase() === "USED" && (
-                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9.5px] font-extrabold rounded-md uppercase tracking-wider">
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-extrabold rounded uppercase tracking-wider">
                                 USED
                               </span>
                             )}
@@ -2223,24 +2518,24 @@ export default function POS(): JSX.Element {
                               e.stopPropagation();
                               setSelectedProductForDetails(product);
                             }}
-                            className="w-6 h-6 rounded-full bg-white shadow-xs flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all cursor-pointer shrink-0"
+                            className="w-5 h-5 rounded-full bg-white shadow-xs flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all cursor-pointer shrink-0"
                             title="View Details"
                           >
-                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
                             </svg>
                           </button>
                         </div>
 
                         {/* Centered Image */}
-                        <div className="flex-1 w-full flex items-center justify-center my-1 overflow-hidden">
+                        <div className="flex-1 w-full flex items-center justify-center my-0.5 overflow-hidden">
                           {productImg ? (
                             <img
                               src={productImg}
                               alt={product.name || "Product"}
                               loading="lazy"
                               decoding="async"
-                              className="max-h-20 sm:max-h-24 max-w-[85%] object-contain transition-transform duration-200 group-hover:scale-105"
+                              className="max-h-18 sm:max-h-20 xl:max-h-24 max-w-[85%] object-contain transition-transform duration-200 group-hover:scale-105"
                               onError={(e) => {
                                 const target = e.currentTarget;
                                 const fallbackBase = "https://api.hotlinecellular.lk";
@@ -2263,7 +2558,7 @@ export default function POS(): JSX.Element {
                           ) : null}
                           <div
                             style={{ display: productImg ? "none" : "flex" }}
-                            className="w-12 h-12 rounded-lg bg-white/80 text-blue-600 flex items-center justify-center text-lg font-bold shadow-2xs"
+                            className="w-10 h-10 rounded-lg bg-white/80 text-blue-600 flex items-center justify-center text-base font-bold shadow-2xs"
                           >
                             {(product?.name?.[0] || "P").toUpperCase()}
                           </div>
@@ -2271,19 +2566,19 @@ export default function POS(): JSX.Element {
                       </div>
 
                       {/* Title & Price */}
-                      <div className="mt-3">
+                      <div className="mt-2">
                         <h3
-                          className="text-xs sm:text-[13px] font-extrabold text-slate-800 uppercase tracking-tight truncate leading-snug"
+                          className="text-xs xl:text-[13px] font-extrabold text-slate-800 uppercase tracking-tight truncate leading-snug"
                           title={product?.name}
                         >
                           {product?.name}
                         </h3>
-                        <div className="flex items-baseline gap-1.5 mt-1">
-                          <span className="text-[15px] sm:text-[16px] font-extrabold text-[#2563eb] tracking-tight">
+                        <div className="flex items-baseline gap-1 mt-0.5">
+                          <span className="text-xs sm:text-sm xl:text-[15px] font-extrabold text-[#2563eb] tracking-tight">
                             Rs. {displayPrice.toLocaleString()}
                           </span>
                           {hasOffer && originalPrice > displayPrice && (
-                            <span className="text-[11px] text-slate-400 line-through font-medium">
+                            <span className="text-[10px] text-slate-400 line-through font-medium">
                               Rs. {originalPrice.toLocaleString()}
                             </span>
                           )}
@@ -2294,7 +2589,7 @@ export default function POS(): JSX.Element {
                       <button
                         onClick={() => handleProductClick(product)}
                         disabled={isOutOfStock}
-                        className={`w-full py-1.5 sm:py-2 px-3 rounded-xl font-bold text-xs sm:text-[12.5px] transition-all duration-150 flex items-center justify-center gap-1 mt-2.5 cursor-pointer shadow-2xs active:scale-[0.98] ${
+                        className={`w-full py-1.5 xl:py-2 px-2.5 rounded-lg xl:rounded-xl font-bold text-[11px] xl:text-xs transition-all duration-150 flex items-center justify-center gap-1 mt-2 cursor-pointer shadow-2xs active:scale-[0.98] ${
                           isOutOfStock
                             ? "bg-slate-100 text-slate-400 cursor-not-allowed hover:bg-slate-100 hover:text-slate-400"
                             : needsVariantSelection
@@ -2310,14 +2605,14 @@ export default function POS(): JSX.Element {
               </div>
 
               {filteredProducts.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border border-slate-200/80 shadow-xs mt-2">
-                  <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mb-3">
-                    <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-slate-200/80 shadow-xs mt-2">
+                  <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mb-2.5">
+                    <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                     </svg>
                   </div>
-                  <h3 className="text-base font-bold text-slate-800 mb-1">No products found</h3>
-                  <p className="text-xs text-slate-400 text-center max-w-sm">
+                  <h3 className="text-sm font-bold text-slate-800 mb-0.5">No products found</h3>
+                  <p className="text-[11px] text-slate-400 text-center max-w-sm">
                     Try adjusting your search or category filter to find products.
                   </p>
                 </div>
@@ -2326,21 +2621,21 @@ export default function POS(): JSX.Element {
           </div>
 
           {/* Right Sidebar - Current Order (Cart) */}
-          <aside className="w-80 bg-white rounded-2xl p-4 shadow-2xs border border-slate-200/90 flex flex-col h-full shrink-0 overflow-hidden">
+          <aside className="w-68 xl:w-74 2xl:w-80 bg-white rounded-xl xl:rounded-2xl p-3 xl:p-4 shadow-2xs border border-slate-200/90 flex flex-col h-full shrink-0 overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shadow-2xs">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shadow-2xs">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-slate-900 leading-tight">
+                  <h2 className="text-sm font-bold text-slate-900 leading-tight">
                     Current Order
                   </h2>
                   {cart.length > 0 && (
-                    <span className="text-[10px] text-slate-400 font-medium">
+                    <span className="text-[9.5px] text-slate-400 font-medium">
                       {cart.reduce((sum, item) => sum + item.quantity, 0)} items
                     </span>
                   )}
@@ -2349,7 +2644,7 @@ export default function POS(): JSX.Element {
               {cart.length > 0 && (
                 <button
                   onClick={clearCart}
-                  className="text-xs font-semibold text-red-500 hover:text-red-700 cursor-pointer"
+                  className="text-[11px] font-semibold text-red-500 hover:text-red-700 cursor-pointer"
                 >
                   Clear All
                 </button>
@@ -2357,19 +2652,19 @@ export default function POS(): JSX.Element {
             </div>
 
             {/* Cart Content */}
-            <div className="flex-1 overflow-y-auto py-3 space-y-2.5 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+            <div className="flex-1 overflow-y-auto py-2.5 space-y-2 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
               {cart.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center py-10">
-                  <div className="w-20 h-20 rounded-full bg-blue-50/80 flex items-center justify-center mb-4">
-                    <svg className="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="h-full flex flex-col items-center justify-center py-8">
+                  <div className="w-14 h-14 rounded-full bg-blue-50/80 flex items-center justify-center mb-3">
+                    <svg className="w-7 h-7 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
                     </svg>
                   </div>
-                  <h3 className="text-base font-bold text-slate-800 mb-1">
+                  <h3 className="text-sm font-bold text-slate-800 mb-0.5">
                     No items yet
                   </h3>
-                  <p className="text-xs text-slate-400 text-center max-w-[200px]">
-                    Add products from the catalog to start an order
+                  <p className="text-[11px] text-slate-400 text-center max-w-[180px]">
+                    Add products from catalog to start an order
                   </p>
                 </div>
               ) : (
@@ -2387,11 +2682,11 @@ export default function POS(): JSX.Element {
                           ? `${item._id}_${item.serialNumber}`
                           : `${item._id}_${index}`
                       }
-                      className="bg-slate-50/80 rounded-2xl p-3 border border-slate-200/70 hover:border-blue-300 transition-all shadow-2xs"
+                      className="bg-slate-50/80 rounded-xl p-2 xl:p-2.5 border border-slate-200/70 hover:border-blue-300 transition-all shadow-2xs"
                     >
-                      <div className="flex items-start gap-2.5">
+                      <div className="flex items-start gap-2">
                         {/* Thumbnail Image */}
-                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200/80 p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-2xs">
+                        <div className="w-10 h-10 xl:w-11 xl:h-11 rounded-lg bg-white border border-slate-200/80 p-0.5 flex items-center justify-center shrink-0 overflow-hidden shadow-2xs">
                           {itemImg ? (
                             <img
                               src={itemImg}
@@ -2428,12 +2723,12 @@ export default function POS(): JSX.Element {
                         {/* Title, Badges & Remove Button */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-1">
-                            <h4 className="text-slate-800 font-bold text-xs leading-snug truncate" title={item.name}>
+                            <h4 className="text-slate-800 font-bold text-[11px] xl:text-xs leading-snug truncate" title={item.name}>
                               {item.name}
                             </h4>
                             <button
                               onClick={() => removeFromCart(index)}
-                              className="p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer shrink-0 -mt-0.5 -mr-0.5"
+                              className="p-0.5 text-slate-400 hover:text-red-500 transition-colors cursor-pointer shrink-0 -mt-0.5 -mr-0.5"
                               title="Remove item"
                             >
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2443,19 +2738,19 @@ export default function POS(): JSX.Element {
                           </div>
                           {/* Variant & Serial Badges */}
                           {(item.variantDisplay || item.serialNumber || hasItemOffer || item.isSimReload) && (
-                            <div className="flex flex-wrap items-center gap-1 mt-1">
+                            <div className="flex flex-wrap items-center gap-1 mt-0.5">
                               {item.variantDisplay && (
-                                <span className="text-[10px] font-semibold text-blue-700 bg-blue-100/70 px-1.5 py-0.5 rounded">
+                                <span className="text-[9px] font-semibold text-blue-700 bg-blue-100/70 px-1 py-0.2 rounded">
                                   {item.variantDisplay}
                                 </span>
                               )}
                               {item.serialNumber && (
-                                <span className="text-[10px] font-mono font-bold text-sky-800 bg-sky-100/70 px-1.5 py-0.5 rounded">
-                                  IMEI: {item.serialNumber}
+                                <span className="text-[9px] font-mono font-bold text-sky-800 bg-sky-100/70 px-1 py-0.2 rounded">
+                                  {isImeiProduct(item) ? `IMEI: ${item.serialNumber}` : `SN: ${item.serialNumber}`}
                                 </span>
                               )}
                               {item.isSimReload && (
-                                <span className="text-[10px] font-semibold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                                <span className="text-[9px] font-semibold text-purple-700 bg-purple-100 px-1 py-0.2 rounded">
                                   {item.simReloadType === "RELOAD" ? "Reload" : "SIM"}
                                 </span>
                               )}
@@ -2464,10 +2759,10 @@ export default function POS(): JSX.Element {
                         </div>
                       </div>
 
-                      {/* Price, Discount & Quantity controls */}
-                      <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-200/60">
+                      {/* Quantity Stepper & Line Total Row */}
+                      <div className="flex items-center justify-between gap-1.5 mt-1.5 pt-1.5 border-t border-slate-200/60">
                         {/* Quantity Stepper */}
-                        <div className="flex items-center bg-white rounded-lg border border-slate-200/80 p-0.5">
+                        <div className="flex items-center bg-white rounded-md border border-slate-200/80 p-0.5">
                           <button
                             onClick={() =>
                               updateQuantity(
@@ -2477,12 +2772,12 @@ export default function POS(): JSX.Element {
                                 item.variantId
                               )
                             }
-                            className="w-5 h-5 rounded text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all disabled:opacity-30 cursor-pointer"
-                            disabled={!!item.serialNumber || item.quantity <= 1}
+                            className="w-4.5 h-4.5 rounded text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all disabled:opacity-30 cursor-pointer text-xs"
+                            disabled={isImeiProduct(item) || item.quantity <= 1}
                           >
                             -
                           </button>
-                          <span className="w-6 text-center text-xs font-bold text-slate-800">
+                          <span className="w-5 text-center text-[11px] font-bold text-slate-800">
                             {item.quantity}
                           </span>
                           <button
@@ -2494,48 +2789,99 @@ export default function POS(): JSX.Element {
                                 item.variantId
                               )
                             }
-                            className="w-5 h-5 rounded text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all disabled:opacity-30 cursor-pointer"
-                            disabled={!!item.serialNumber}
+                            className="w-4.5 h-4.5 rounded text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all disabled:opacity-30 cursor-pointer text-xs"
+                            disabled={isImeiProduct(item)}
                           >
                             +
                           </button>
                         </div>
 
-                        {/* Inline Discount if permitted */}
-                        {canApplyDiscount && (
-                          <div className="flex items-center gap-0.5 text-[10px] text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded border border-red-200">
-                            <span>Disc:</span>
-                            <input
-                              type="number"
-                              className="w-10 bg-transparent text-right font-bold text-red-700 focus:outline-none"
-                              style={{ color: '#b91c1c' }}
-                              value={item.discountAmount ?? ""}
-                              placeholder="0"
-                              onChange={(e) => {
-                                const newCart = [...cart];
-                                const rawVal = e.target.value;
-                                const val = parseFloat(rawVal);
-                                const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
-                                if (!isNaN(val) && val >= 0) {
-                                  newCart[index].discountAmount = val;
-                                  newCart[index].effectivePrice = Math.max(0, base - val);
-                                  setCart(newCart);
-                                } else if (rawVal === "") {
-                                  // @ts-expect-error
-                                  newCart[index].discountAmount = "";
-                                  newCart[index].effectivePrice = base;
-                                  setCart(newCart);
-                                }
-                              }}
-                            />
-                          </div>
-                        )}
-
-                        {/* Line Total */}
-                        <span className="text-xs font-extrabold text-blue-600">
-                          Rs. {getLineTotal(item).toLocaleString()}
-                        </span>
+                        {/* Line Total with optional strikethrough original price if discounted */}
+                        <div className="flex items-center gap-1.5 text-right">
+                          {Number(item.discountAmount ?? 0) > 0 && (
+                            <span className="text-[10px] text-slate-400 line-through">
+                              Rs. {(Number(item.originalPrice ?? item.sellingPrice ?? 0) * item.quantity).toLocaleString()}
+                            </span>
+                          )}
+                          <span className="text-[11.5px] xl:text-xs font-extrabold text-blue-600">
+                            Rs. {getLineTotal(item).toLocaleString()}
+                          </span>
+                        </div>
                       </div>
+
+                      {/* Inline Price / Discount Edit on Next Line */}
+                      {canApplyDiscount && (
+                        <div className="mt-1 pt-1 border-t border-dashed border-slate-200/60">
+                          <div
+                            className={`flex items-center justify-between gap-1 text-[9.5px] font-semibold px-2 py-0.5 rounded border transition-all ${
+                              Number(item.discountAmount ?? 0) > 0
+                                ? "bg-red-50 border-red-200 text-red-700"
+                                : "bg-slate-50 border-slate-200 text-slate-700"
+                            }`}
+                            title="Enter discounted selling price (e.g. 7600) to auto-calculate discount"
+                          >
+                            <div className="flex items-center gap-1 min-w-0 flex-1">
+                              <span className="shrink-0 font-bold text-[9px] uppercase tracking-wide text-slate-500">
+                                Price:
+                              </span>
+                              <input
+                                type="number"
+                                className="w-20 sm:w-24 bg-transparent text-left font-bold focus:outline-none text-[10px] tabular-nums"
+                                style={{ color: Number(item.discountAmount ?? 0) > 0 ? '#b91c1c' : '#0f172a' }}
+                                value={
+                                  item.customPrice !== undefined
+                                    ? item.customPrice
+                                    : Number(item.discountAmount ?? 0) > 0
+                                    ? Number(item.effectivePrice ?? (Number(item.originalPrice ?? item.sellingPrice ?? 0) - Number(item.discountAmount)))
+                                    : ""
+                                }
+                                placeholder={String(Number(item.originalPrice ?? item.sellingPrice ?? 0))}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => {
+                                  const newCart = [...cart];
+                                  const rawVal = e.target.value;
+                                  const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
+
+                                  if (rawVal === "") {
+                                    newCart[index].customPrice = "";
+                                    newCart[index].discountAmount = 0;
+                                    newCart[index].effectivePrice = base;
+                                    setCart(newCart);
+                                    return;
+                                  }
+
+                                  const val = parseFloat(rawVal);
+                                  if (!isNaN(val) && val >= 0) {
+                                    newCart[index].customPrice = rawVal;
+                                    newCart[index].effectivePrice = val;
+                                    const disc = Math.max(0, base - val);
+                                    newCart[index].discountAmount = Math.round(disc * 100) / 100;
+                                    setCart(newCart);
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (item.customPrice === "") {
+                                    const newCart = [...cart];
+                                    const base = Number(newCart[index].originalPrice ?? newCart[index].sellingPrice ?? 0);
+                                    delete newCart[index].customPrice;
+                                    newCart[index].discountAmount = 0;
+                                    newCart[index].effectivePrice = base;
+                                    setCart(newCart);
+                                  }
+                                }}
+                              />
+                            </div>
+                            {Number(item.discountAmount ?? 0) > 0 && (
+                              <span
+                                className="text-[9px] text-red-600 font-extrabold shrink-0 bg-red-100/90 px-1.5 py-0.2 rounded"
+                                title={`Auto Discount: Rs. ${Number(item.discountAmount).toLocaleString()}`}
+                              >
+                                -Rs. {Number(item.discountAmount).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -2543,25 +2889,25 @@ export default function POS(): JSX.Element {
             </div>
 
             {/* Cart Footer */}
-            <div className="pt-3.5 border-t border-slate-100 space-y-2 shrink-0">
-              <div className="flex justify-between items-center text-xs">
+            <div className="pt-2.5 xl:pt-3 border-t border-slate-100 space-y-1.5 shrink-0">
+              <div className="flex justify-between items-center text-[11px] xl:text-xs">
                 <span className="text-slate-500 font-medium">Subtotal</span>
                 <span className="text-slate-800 font-bold">Rs. {rawSubtotal.toLocaleString()}</span>
               </div>
               {totalDiscount > 0 && (
-                <div className="flex justify-between items-center text-xs text-red-500 font-medium">
+                <div className="flex justify-between items-center text-[11px] xl:text-xs text-red-500 font-medium">
                   <span>Discount</span>
                   <span className="font-bold">- Rs. {totalDiscount.toLocaleString()}</span>
                 </div>
               )}
-              <div className="flex justify-between items-center text-xs">
+              <div className="flex justify-between items-center text-[11px] xl:text-xs">
                 <span className="text-slate-500 font-medium">Tax</span>
                 <span className="text-slate-800 font-bold">Rs. {tax.toLocaleString()}</span>
               </div>
 
-              <div className="flex justify-between items-center pt-2 border-t border-slate-100">
-                <span className="text-base font-extrabold text-slate-900">Total</span>
-                <span className="text-2xl font-black text-blue-600">
+              <div className="flex justify-between items-center pt-1.5 border-t border-slate-100">
+                <span className="text-xs xl:text-sm font-extrabold text-slate-900">Total</span>
+                <span className="text-lg xl:text-xl font-black text-blue-600">
                   Rs. {total.toLocaleString()}
                 </span>
               </div>
@@ -2570,7 +2916,7 @@ export default function POS(): JSX.Element {
               <button
                 onClick={() => setShowPaymentModal(true)}
                 disabled={cart.length === 0}
-                className={`w-full py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-2xs ${
+                className={`w-full py-2 xl:py-2.5 rounded-lg font-bold text-xs xl:text-sm transition-all flex items-center justify-center gap-2 mt-1.5 cursor-pointer shadow-2xs ${
                   cart.length === 0
                     ? "bg-blue-600 text-white opacity-90 cursor-not-allowed shadow-none"
                     : "bg-blue-600 hover:bg-blue-700 text-white active:scale-[0.99]"
@@ -2580,20 +2926,6 @@ export default function POS(): JSX.Element {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
                 </svg>
                 <span>{cart.length === 0 ? "Add Items to Pay" : "Proceed to Payment"}</span>
-              </button>
-
-              {/* Secondary Action Button */}
-              <button
-                onClick={() => {
-                  if (cart.length > 0) setShowPaymentModal(true);
-                }}
-                disabled={cart.length === 0}
-                className="w-full py-2.5 rounded-lg font-semibold text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                </svg>
-                <span>Add Items to Pay</span>
               </button>
             </div>
           </aside>
@@ -2611,10 +2943,51 @@ export default function POS(): JSX.Element {
           exchangePayload={exchangePayload}
           onClose={() => setShowPaymentModal(false)}
           onSuccess={() => {
+            const soldItems = [...(cartRef.current || cart)];
             clearCart();
             setShowPaymentModal(false);
             productVariantsCache.clear();
-            fetchData();
+
+            // Instantly deduct sold items from local inventory in memory (0ms latency!)
+            if (soldItems.length > 0) {
+              const updated = (productsRef.current || products).map((p: any) => {
+                const soldForThisProd = soldItems.filter((item: any) => String(item.product._id) === String(p._id));
+                if (soldForThisProd.length === 0) return p;
+
+                const newStock = Math.max(0, (p.stock || 0) - soldForThisProd.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0));
+                let newStockItems = Array.isArray(p.stockItems) ? [...p.stockItems] : [];
+                let newImeis = Array.isArray(p.imeis) ? [...p.imeis] : [];
+                let newSerialNumbers = Array.isArray(p.serialNumbers) ? [...p.serialNumbers] : [];
+
+                soldForThisProd.forEach((sold: any) => {
+                  if (sold.serialNumber) {
+                    const lowerSn = String(sold.serialNumber).toLowerCase();
+                    newStockItems = newStockItems.filter(
+                      (si: any) =>
+                        String(si.imei1 || "").toLowerCase() !== lowerSn &&
+                        String(si.imei2 || "").toLowerCase() !== lowerSn &&
+                        String(si.serialNumber || "").toLowerCase() !== lowerSn &&
+                        String(si._id || "") !== String(sold.stockItemId || "")
+                    );
+                    newImeis = newImeis.filter((im: string) => String(im).toLowerCase() !== lowerSn);
+                    newSerialNumbers = newSerialNumbers.filter((sn: string) => String(sn).toLowerCase() !== lowerSn);
+                  }
+                });
+
+                return {
+                  ...p,
+                  stock: newStock,
+                  stockItems: newStockItems,
+                  imeis: newImeis,
+                  serialNumbers: newSerialNumbers,
+                };
+              });
+              productsRef.current = updated;
+              setProducts(updated);
+            }
+
+            // Silent background refresh
+            fetchData(true);
           }}
         />
       )}

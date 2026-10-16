@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { RotateCcw, X, Search, Loader2, Check, ShoppingCart, ArrowLeftRight } from "lucide-react";
 import { apiGet, apiPost } from "../../../lib/api";
 import { PermissionOverrideModal } from "../modals/PermissionOverrideModal";
 import type { ReturnsPanelProps } from "../../../types/pos";
@@ -220,7 +221,7 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
         <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
-              ↩️
+              <RotateCcw className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -241,7 +242,7 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
             title="Close"
           >
-            ✕
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -257,7 +258,7 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
                   if (sale) setSale(null);
                 }}
                 placeholder="Enter Sale Number (e.g., SL-20260128-0001)"
-                className="flex-1 px-4 py-2.5 bg-white border border-sky-200/50 rounded-xl text-slate-800 placeholder-slate-400 shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:bg-slate-800 dark:text-white"
+                className="flex-1 px-4 py-2 bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-medium text-xs transition-all"
                 onKeyDown={(e) => e.key === "Enter" && searchSale()}
                 onFocus={() => { if (searchResults.length > 0 && !sale) setShowDropdown(true); }}
                 onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
@@ -265,9 +266,19 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
               <button
                 onClick={() => searchSale()}
                 disabled={searchLoading || !saleNumber.trim()}
-                className="px-6 py-2.5 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-xs text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                {searchLoading ? "⏳" : "🔍 Find"}
+                {searchLoading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Finding...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-3.5 h-3.5" />
+                    Find
+                  </>
+                )}
               </button>
 
               {/* Autocomplete Dropdown */}
@@ -325,9 +336,9 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
                         <div className="flex items-start gap-3">
                           <div
                             onClick={() => toggleItem(item._id)}
-                            className={`mt-1 w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer ${selectedItems[item._id]?.selected ? "bg-sky-500 border-sky-500" : "border-slate-300"}`}
+                            className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center cursor-pointer transition-colors ${selectedItems[item._id]?.selected ? "bg-blue-600 border-blue-600" : "border-slate-300 bg-white"}`}
                           >
-                            {selectedItems[item._id]?.selected && <span className="text-white text-xs">✓</span>}
+                            {selectedItems[item._id]?.selected && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
                           </div>
                           <div className="flex-1">
                             <p className="text-slate-800 font-medium dark:text-white">{item.productName}</p>
@@ -349,10 +360,10 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
                                       updateItemReturnData(item._id, "condition", e.target.value);
                                       updateItemReturnData(item._id, "destination", e.target.value === "DEFECTIVE" ? "DEFECTIVE_INVENTORY" : "RETURN_TO_STOCK");
                                     }}
-                                    className="flex-1 bg-sky-50 dark:bg-slate-800 border border-sky-200 dark:border-slate-700 rounded py-1 px-2 text-slate-800 dark:text-white text-sm"
+                                    className="flex-1 bg-white border border-sky-200 rounded py-1 px-2 text-slate-800 text-sm font-medium"
                                   >
-                                    <option value="GOOD" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Good (Return to Stock)</option>
-                                    <option value="DEFECTIVE" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Defective (Move to Defective Inventory)</option>
+                                    <option value="GOOD" className="bg-white text-slate-800">Good (Return to Stock)</option>
+                                    <option value="DEFECTIVE" className="bg-white text-slate-800">Defective (Move to Defective Inventory)</option>
                                   </select>
                                 </div>
                               </div>
@@ -369,13 +380,13 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
                   <select
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-white border border-sky-200/50 rounded-xl text-slate-800 shadow-sm focus:border-sky-500 dark:bg-slate-800 dark:text-white"
+                    className="w-full px-4 py-2.5 bg-white border border-sky-300 rounded-xl text-slate-800 shadow-sm focus:border-sky-500 font-medium"
                   >
-                    <option value="DEFECTIVE" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Defective Product</option>
-                    <option value="WRONG_ITEM" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Wrong Item</option>
-                    <option value="CHANGED_MIND" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Customer Changed Mind</option>
-                    <option value="NOT_AS_DESCRIBED" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Not as Described</option>
-                    <option value="OTHER" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Other</option>
+                    <option value="DEFECTIVE" className="bg-white text-slate-800">Defective Product</option>
+                    <option value="WRONG_ITEM" className="bg-white text-slate-800">Wrong Item</option>
+                    <option value="CHANGED_MIND" className="bg-white text-slate-800">Customer Changed Mind</option>
+                    <option value="NOT_AS_DESCRIBED" className="bg-white text-slate-800">Not as Described</option>
+                    <option value="OTHER" className="bg-white text-slate-800">Other</option>
                   </select>
                 </div>
               </>
@@ -409,12 +420,12 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
               </div>
 
               {resolution === "EXCHANGE" && (
-                <div className="flex-1 flex flex-col items-center justify-center min-h-[200px] text-center p-6 border-2 border-dashed border-sky-200 dark:border-slate-700 rounded-xl mt-4 bg-sky-50/50 dark:bg-slate-800/50">
-                  <div className="w-16 h-16 bg-sky-100 dark:bg-slate-700 rounded-full flex items-center justify-center mb-4 text-2xl">
-                    🛒
+                <div className="flex-1 flex flex-col items-center justify-center min-h-[200px] text-center p-6 border border-dashed border-slate-200 rounded-xl mt-4 bg-slate-50/50">
+                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-3 border border-blue-100">
+                    <ShoppingCart className="w-6 h-6" />
                   </div>
-                  <h4 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Continue in Main Order</h4>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                  <h4 className="text-sm font-bold text-slate-800 mb-1">Continue in Main Order</h4>
+                  <p className="text-xs text-slate-500 max-w-sm">
                     Click "Add Exchange to Order" below to add this return credit to the current order. 
                     Then, you can use the main search to add the new exchange items.
                   </p>
@@ -424,19 +435,34 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
           )}
         </div>
 
-        <div className="p-4 border-t border-sky-200/50 flex gap-3 bg-white/80 dark:bg-slate-800/80">
+        <div className="p-4 border-t border-slate-200 flex gap-3 bg-white">
           <button
             onClick={onClose}
-            className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all dark:bg-slate-800 dark:hover:bg-slate-600 dark:text-slate-300 font-medium"
+            className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all font-semibold text-xs cursor-pointer"
           >
             Cancel
           </button>
           <button
             onClick={() => processReturn()}
             disabled={loading || !hasSelectedItems}
-            className="flex-1 py-3 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-xs text-xs flex items-center justify-center gap-2 cursor-pointer"
           >
-            {loading ? "⏳ Processing..." : resolution === "EXCHANGE" ? "🔄 Add Exchange to Order" : "↩️ Issue Refund"}
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Processing...
+              </>
+            ) : resolution === "EXCHANGE" ? (
+              <>
+                <ArrowLeftRight className="w-4 h-4" />
+                Add Exchange to Order
+              </>
+            ) : (
+              <>
+                <RotateCcw className="w-4 h-4" />
+                Issue Refund
+              </>
+            )}
           </button>
         </div>
       </div>

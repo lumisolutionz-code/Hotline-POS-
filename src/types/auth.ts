@@ -14,6 +14,12 @@ export interface BranchInfo {
   _id: string;
   name: string;
   code: string;
+  businessName?: string;
+  regNo?: string;
+  address?: string | { street?: string; city?: string; province?: string; postalCode?: string };
+  phone?: string;
+  email?: string;
+  isMainBranch?: boolean;
 }
 export interface AuthUser {
   id: string;

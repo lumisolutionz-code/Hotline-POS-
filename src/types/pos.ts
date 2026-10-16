@@ -24,6 +24,7 @@ export interface ProductVariant {
   trackingType?: "QUANTITY" | "IMEI" | string;
   minStockLevel?: number;
   stockQty?: number;
+  stock?: number;
   images?: string[];
   isActive?: boolean;
   sku?: string;
@@ -92,6 +93,7 @@ export interface CartItem extends Product {
   simReloadId?: string;
   provider?: string;
   phoneNumber?: string;
+  customPrice?: number | string;
 }
 
 export interface RepairJob {

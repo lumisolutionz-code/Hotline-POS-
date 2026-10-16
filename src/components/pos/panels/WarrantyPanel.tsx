@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ShieldCheck, X, Search, Inbox } from "lucide-react";
 import { api } from "../../../lib/api";
 import type { WarrantyPanelProps, Warranty } from "../../../types/pos";
 
@@ -95,24 +96,30 @@ export function WarrantyPanel({
       <div className="bg-white dark:bg-slate-900 w-full max-w-2xl min-h-[500px] max-h-[90vh] overflow-hidden border border-slate-800/80 shadow-2xl flex flex-col rounded-2xl">
         {/* Header */}
         <div className="bg-[#0f172a] text-white px-6 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-lg font-bold text-white tracking-wide">
-                Warranty Lookup
-              </h2>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
-                WARRANTY
-              </span>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
+              <ShieldCheck className="w-5 h-5" />
             </div>
-            <p className="text-xs text-slate-400 font-mono mt-0.5">
-              Search and verify customer device warranties
-            </p>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                  Warranty Lookup
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-[#1e293b] text-blue-400 border border-blue-900/60">
+                  WARRANTY
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                Search and verify customer device warranties
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Close"
           >
-            ✕
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -130,7 +137,7 @@ export function WarrantyPanel({
               onFocus={() => { if (searchResults.length > 0 && warranties.length === 0) setShowDropdown(true); }}
               onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
               placeholder="Enter Sale Number (e.g., SL-20231015-0001)..."
-              className="flex-1 px-4 py-2.5 bg-white dark:bg-slate-800 border-2 border-blue-500 rounded-xl text-slate-800 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm font-mono"
+              className="flex-1 px-4 py-2.5 bg-white border-2 border-blue-500 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm font-mono font-medium"
             />
             <button
               onClick={() => searchWarranties()}
@@ -177,10 +184,13 @@ export function WarrantyPanel({
 
           {!loading && searched && warranties.length === 0 && (
             <div className="text-center py-10">
-              <div className="text-5xl mb-4">📭</div>
-              <p className="text-slate-500 dark:text-slate-400">
+              <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3 border border-slate-200">
+                <Inbox className="w-6 h-6" />
+              </div>
+              <p className="text-slate-600 font-semibold text-sm">
                 No warranties found for this sale number
               </p>
+              <p className="text-xs text-slate-400 mt-0.5">Please check the sale number and try again.</p>
             </div>
           )}
 
@@ -283,10 +293,15 @@ export function WarrantyPanel({
             })}
 
           {!searched && !loading && (
-            <div className="text-center py-10">
-              <div className="text-5xl mb-4">🔍</div>
-              <p className="text-slate-500 dark:text-slate-400">
+            <div className="text-center py-12">
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-3 border border-blue-100">
+                <Search className="w-7 h-7" />
+              </div>
+              <p className="text-slate-700 font-semibold text-sm">
                 Enter a Sale Number to search for warranties
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Scan or type the receipt number above to inspect active coverage
               </p>
             </div>
           )}

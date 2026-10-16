@@ -9,49 +9,71 @@
   }
 }
 
-/* Dark mode native form control styles */
-:root.dark,
-html.dark,
-.dark {
-  color-scheme: dark;
-}
-
-/* Dark mode inputs, selects, textareas and dropdown options */
-.dark select,
-.dark input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
-.dark textarea {
-  color-scheme: dark;
-  color: #f8fafc;
-}
-
-/* Light / White inputs should keep dark text even if .dark class is on an ancestor */
-.dark input.bg-white,
-.dark input[class*="bg-white"],
-.dark input[class*="bg-slate-50"],
-.dark textarea.bg-white,
-.dark select.bg-white,
-.bg-white input:not([class*="dark:bg-slate"]),
-.bg-slate-50 input:not([class*="dark:bg-slate"]) {
+/* All standard form controls default to crisp dark text on light backgrounds */
+input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not(.dark-input),
+select:not(.dark-input),
+textarea:not(.dark-input) {
   color: #0f172a !important;
   color-scheme: light !important;
 }
 
-.dark input.bg-white::placeholder,
-.dark input[class*="bg-white"]::placeholder {
+/* Placeholders inside inputs and textareas */
+input:not(.dark-input)::placeholder,
+textarea:not(.dark-input)::placeholder {
   color: #94a3b8 !important;
 }
 
-.dark select option,
-.dark optgroup {
-  background-color: #1e293b !important;
-  color: #f8fafc !important;
+/* Modals, dialogs, drawers, and panels: Guaranteed high-contrast dark text */
+.fixed input:not(.dark-input):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
+.fixed textarea:not(.dark-input),
+.fixed select:not(.dark-input),
+[role="dialog"] input:not(.dark-input):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
+[role="dialog"] textarea:not(.dark-input),
+[role="dialog"] select:not(.dark-input),
+.bg-white input:not(.dark-input):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
+.bg-white textarea:not(.dark-input),
+.bg-white select:not(.dark-input),
+.bg-slate-50 input:not(.dark-input):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
+.bg-slate-50 textarea:not(.dark-input),
+.bg-slate-50 select:not(.dark-input) {
+  color: #0f172a !important;
+  color-scheme: light !important;
 }
 
-.dark select option:hover,
-.dark select option:focus,
-.dark select option:checked {
-  background-color: #0284c7 !important;
+.fixed input:not(.dark-input)::placeholder,
+.fixed textarea:not(.dark-input)::placeholder,
+.bg-white input:not(.dark-input)::placeholder,
+.bg-white textarea:not(.dark-input)::placeholder,
+.bg-slate-50 input:not(.dark-input)::placeholder,
+.bg-slate-50 textarea:not(.dark-input)::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Select options for standard inputs */
+select:not(.dark-input) option,
+select:not(.dark-input) optgroup {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Explicit dark inputs (e.g. SalesPanel dark filter bar) */
+input.dark-input,
+textarea.dark-input,
+select.dark-input {
   color: #ffffff !important;
+  color-scheme: dark !important;
+  background-color: #1e293b !important;
+}
+
+input.dark-input::placeholder,
+textarea.dark-input::placeholder {
+  color: #94a3b8 !important;
+}
+
+input.dark-input::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.2) !important;
+  opacity: 0.9;
+  cursor: pointer;
 }
 
 .dark input::placeholder,
@@ -248,3 +270,30 @@ input[type="number"] {
   background: rgba(16, 185, 129, 0.3);
   color: white;
 }
+
+/* =====================================================
+   Full Screen Edge-to-Edge Layout & POS Resolution Tuning
+   Guarantees zero blank margins or white borders around edges
+   ===================================================== */
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  min-width: 100vw;
+  min-height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background-color: #f0f4f9;
+}
+
+/* Standard POS Displays (1366×768 / 1440×900) Compact Sizing */
+@media screen and (max-width: 1400px), screen and (max-height: 820px) {
+  :root {
+    font-size: 13.5px;
+  }
+}
+
+
+

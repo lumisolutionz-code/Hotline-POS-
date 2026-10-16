@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { X, Loader2, Save, Barcode, Plus, Trash2, Search, Database, Check, Wrench } from "lucide-react";
+import { X, Loader2, Save, Barcode, Plus, Trash2, Search, Database, Check, Wrench, Info } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
 import { api } from "../../../lib/api";
 
@@ -564,25 +564,25 @@ export function CreateRepairModal({
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white mb-4">Customer Details</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Name *</label>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Name *</label>
                     <input type="text" required
                       value={formData.customer.name}
                       onChange={e => setFormData({...formData, customer: {...formData.customer, name: e.target.value}})}
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                      className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Phone *</label>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Phone *</label>
                     <input type="text" required
                       value={formData.customer.phone}
                       onChange={e => setFormData({...formData, customer: {...formData.customer, phone: e.target.value}})}
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                      className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">
+                      <label className="block text-xs font-medium text-slate-600">
                         Email <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
                       </label>
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500">Ask: Has website account?</span>
+                      <span className="text-[10px] text-slate-400">Ask: Has website account?</span>
                     </div>
                     <div className="relative">
                       <input type="email"
@@ -599,7 +599,7 @@ export function CreateRepairModal({
                         }}
                         placeholder="customer@email.com (Optional)"
                         autoComplete="off"
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                       <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
                         {loadingSuggestions && (
                           <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
@@ -666,13 +666,13 @@ export function CreateRepairModal({
                     {/* Live account detection indicator */}
                     {clientAccount?.exists && (
                       <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-800/50">
-                        <span className="font-bold">✓</span>
+                        <Check className="h-3 w-3 stroke-[3]" />
                         <span><strong>Account Linked:</strong> {clientAccount.name} (Auto-syncs to online portal)</span>
                       </div>
                     )}
                     {clientAccount && !clientAccount.exists && formData.customer.email.length > 4 && !checkingAccount && (
                       <div className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                        <span>ℹ</span>
+                        <Info className="h-3 w-3 text-slate-400" />
                         <span>Not registered on website yet (Optional)</span>
                       </div>
                     )}
@@ -686,11 +686,11 @@ export function CreateRepairModal({
                 <div className="space-y-4">
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Device Type *</label>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Device Type *</label>
                       <select required
                         value={formData.device.type}
                         onChange={e => setFormData({...formData, device: {...formData.device, type: e.target.value}})}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none">
+                        className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none">
                         <option value="MOBILE_PHONE">Mobile Phone</option>
                         <option value="TABLET">Tablet</option>
                         <option value="LAPTOP">Laptop</option>
@@ -699,42 +699,42 @@ export function CreateRepairModal({
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Brand (Optional)</label>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Brand (Optional)</label>
                       <input type="text"
                         value={formData.device.brand}
                         onChange={e => setFormData({...formData, device: {...formData.device, brand: e.target.value}})}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Model (Optional)</label>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Model (Optional)</label>
                       <input type="text"
                         value={formData.device.model}
                         onChange={e => setFormData({...formData, device: {...formData.device, model: e.target.value}})}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">IMEI</label>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">IMEI</label>
                       <input type="text"
                         value={formData.device.imei1}
                         onChange={e => setFormData({...formData, device: {...formData.device, imei1: e.target.value}})}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Color</label>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Color</label>
                       <input type="text"
                         value={formData.device.color}
                         onChange={e => setFormData({...formData, device: {...formData.device, color: e.target.value}})}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Condition</label>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Condition</label>
                     <input type="text"
                       value={formData.device.condition}
                       onChange={e => setFormData({...formData, device: {...formData.device, condition: e.target.value}})}
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                      className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                   </div>
                 </div>
               </div>
@@ -744,38 +744,38 @@ export function CreateRepairModal({
             <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-white mb-2">Problem Description *</label>
+                  <label className="block text-xs font-bold text-slate-800 mb-2">Problem Description *</label>
                   <textarea required rows={4}
                     value={formData.problemDescription}
                     onChange={e => setFormData({...formData, problemDescription: e.target.value})}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"></textarea>
+                    className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"></textarea>
                 </div>
                 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-white mb-2">Priority</label>
+                    <label className="block text-xs font-bold text-slate-800 mb-2">Priority</label>
                     <select
                       value={formData.priority}
                       onChange={e => setFormData({...formData, priority: e.target.value})}
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                      className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none font-medium"
                     >
-                      <option value="LOW" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Low</option>
-                      <option value="NORMAL" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Normal</option>
-                      <option value="HIGH" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">High</option>
-                      <option value="URGENT" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Urgent</option>
+                      <option value="LOW">Low</option>
+                      <option value="NORMAL">Normal</option>
+                      <option value="HIGH">High</option>
+                      <option value="URGENT">Urgent</option>
                     </select>
                   </div>
                   
                   <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-white mb-2">Assign Technician *</label>
+                    <label className="block text-xs font-bold text-slate-800 mb-2">Assign Technician *</label>
                     <select required
                       value={formData.assignedTo}
                       onChange={e => setFormData({...formData, assignedTo: e.target.value})}
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                      className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none font-medium"
                     >
-                      <option value="" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">-- Select Technician --</option>
+                      <option value="">-- Select Technician --</option>
                       {technicians.map(tech => (
-                        <option key={tech._id} value={tech._id} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">{tech.username}</option>
+                        <option key={tech._id} value={tech._id}>{tech.username}</option>
                       ))}
                     </select>
                   </div>
@@ -821,7 +821,7 @@ export function CreateRepairModal({
                             onKeyDown={e => handlePartKeyDown(e, index, 'barcode')}
                             placeholder="Type or scan..."
                             autoComplete="off"
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-l-lg px-2.5 py-1.5 text-sm font-mono focus:border-blue-500 outline-none" />
+                            className="w-full bg-white border border-slate-300 text-slate-900 rounded-l-lg px-2.5 py-1.5 text-sm font-mono focus:border-blue-500 outline-none" />
                           <button type="button" onClick={() => scanBarcode(index)} title="Lookup barcode in DB" className="px-2 bg-slate-100 border-y border-r border-slate-200 dark:border-slate-700 dark:bg-slate-700 rounded-r-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-colors">
                             <Barcode className="w-4 h-4" />
                           </button>
@@ -895,7 +895,7 @@ export function CreateRepairModal({
                             onKeyDown={e => handlePartKeyDown(e, index, 'partName')}
                             placeholder="Search part name from DB..."
                             autoComplete="off"
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-2.5 py-1.5 text-sm focus:border-blue-500 outline-none" />
+                            className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-2.5 py-1.5 text-sm focus:border-blue-500 outline-none font-medium" />
                           {isNameActive && loadingPartSuggestions && (
                             <span className="absolute right-2.5 top-2.5 text-slate-400">
                               <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
@@ -964,12 +964,12 @@ export function CreateRepairModal({
                             newParts[index].quantity = e.target.value;
                             setParts(newParts);
                           }}
-                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-2 py-1.5 text-sm focus:border-blue-500 outline-none" />
+                          className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-2 py-1.5 text-sm focus:border-blue-500 outline-none" />
                       </div>
 
                       {/* 4. Price Field (auto-filled on selection) */}
                       <div className="w-24">
-                        <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Price</label>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Price</label>
                         <input type="number" required min="0" step="0.01"
                           value={part.unitPrice}
                           onChange={e => {
@@ -977,7 +977,7 @@ export function CreateRepairModal({
                             newParts[index].unitPrice = e.target.value;
                             setParts(newParts);
                           }}
-                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-2 py-1.5 text-sm focus:border-blue-500 outline-none" />
+                          className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-2 py-1.5 text-sm focus:border-blue-500 outline-none" />
                       </div>
 
                       {/* 5. Delete Action */}
@@ -1000,25 +1000,25 @@ export function CreateRepairModal({
               <h3 className="text-sm font-bold text-slate-800 dark:text-white mb-4">Cost Summary & Deadlines</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div>
-                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Labor Cost (Rs.)</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Labor Cost (Rs.)</label>
                   <input type="number" min="0" required
                     value={formData.serviceCost}
                     onChange={e => setFormData({...formData, serviceCost: Number(e.target.value)})}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none font-bold" />
+                    className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none font-bold" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Advance Payment (Rs.)</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Advance Payment (Rs.)</label>
                   <input type="number" min="0" required
                     value={formData.advancePayment}
                     onChange={e => setFormData({...formData, advancePayment: Number(e.target.value)})}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none font-bold text-emerald-600 dark:text-emerald-400" />
+                    className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none font-bold text-emerald-600" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Expected Completion *</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Expected Completion *</label>
                   <input type="datetime-local" required
                     value={formData.expectedCompletionDate}
                     onChange={e => setFormData({...formData, expectedCompletionDate: e.target.value})}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                    className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                 </div>
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex flex-col justify-center">
                   <div className="flex justify-between text-xs text-slate-500 mb-1">
@@ -1085,7 +1085,7 @@ export function CreateRepairModal({
                   <Search className="w-4 h-4" />
                 </span>
                 <input type="text" value={searchQuery} onChange={(e) => searchParts(e.target.value)}
-                  className="block w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm rounded-xl focus:ring-blue-500 focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all placeholder-slate-400"
+                  className="block w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 text-slate-900 text-sm rounded-xl focus:ring-blue-500 focus:border-blue-500 transition-all placeholder-slate-400 font-medium"
                   placeholder="Search by name or barcode..." autoFocus />
               </div>
               

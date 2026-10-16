@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -81,9 +81,21 @@ export function configureAutoUpdater(overrideToken?: string | null) {
 function createWindow() {
   win = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC, 'icon.ico'),
+    backgroundColor: '#f0f4f9',
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
+  })
+
+  win.maximize()
+
+  // Open external links in user's default browser
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'allow' }
   })
 
   // Test active push message to Renderer-process.
@@ -106,7 +118,6 @@ function createWindow() {
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
-    win.webContents.openDevTools()
   } else {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, 'index.html'))
@@ -211,5 +222,13 @@ ipcMain.handle('get_app_version', () => {
 // Listen for restart command from frontend
 ipcMain.on('restart_app', () => {
   autoUpdater.quitAndInstall()
+})
+
+ipcMain.handle('open_external', async (_, url: string) => {
+  if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+    await shell.openExternal(url)
+    return true
+  }
+  return false
 })
 

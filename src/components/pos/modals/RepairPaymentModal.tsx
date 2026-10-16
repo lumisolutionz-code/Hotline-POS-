@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Banknote, CreditCard, Smartphone, Check, Receipt, FileText, Loader2, X } from "lucide-react";
 import { api } from "../../../lib/api";
 import { getShopSettings } from "../../../lib/settings";
 import {
@@ -158,7 +159,7 @@ export function RepairPaymentModal({
         <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
-              💵
+              <Banknote className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -179,43 +180,32 @@ export function RepairPaymentModal({
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
             title="Close"
           >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scrollable / Flexible Form Content */}
         <div className="px-4 py-2.5 space-y-2 overflow-y-auto flex-1 scrollbar-thin">
           {/* Device Info */}
-          <div className="bg-slate-50/80 dark:bg-slate-800/60 rounded-xl px-3.5 py-2 border border-slate-200/80 dark:border-slate-700/80">
+          <div className="bg-slate-50/80 rounded-xl px-3.5 py-2 border border-slate-200">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-sky-100 dark:bg-sky-950/80 flex items-center justify-center text-lg border border-sky-200 dark:border-sky-800/60 shrink-0">
-                📱
+              <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center border border-slate-200 shrink-0">
+                <Smartphone className="w-4 h-4" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-slate-800 font-bold dark:text-slate-100 text-xs truncate">
+                <p className="text-slate-800 font-bold text-xs truncate">
                   {repair.device.brand} {repair.device.model}
                 </p>
-                <p className="text-slate-500 text-[11px] dark:text-slate-400 truncate">
+                <p className="text-slate-500 text-[11px] truncate">
                   {repair.problemDescription?.slice(0, 50) || "Device repair"}
                 </p>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  <span className="text-[10px] text-slate-500">
                     Tech: {repair.assignedTo?.username || "N/A"}
                   </span>
-                  <span className="px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 rounded text-[10px] font-semibold border border-emerald-300 dark:border-emerald-800/60">
-                    ✓ Ready
+                  <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 rounded text-[10px] font-semibold border border-emerald-200 flex items-center gap-0.5">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    Ready
                   </span>
                 </div>
               </div>
@@ -291,17 +281,29 @@ export function RepairPaymentModal({
               <div className="grid grid-cols-2 gap-1.5">
                 {(
                   [
-                    { method: "CASH", icon: "💵", label: "Cash" },
-                    { method: "CARD", icon: "💳", label: "Card" },
+                    { method: "CASH", icon: Banknote, label: "Cash" },
+                    { method: "CARD", icon: CreditCard, label: "Card" },
                   ] as const
-                ).map(({ method, icon, label }) => (
+                ).map(({ method, icon: Icon, label }) => (
                   <button
                     key={method}
-                    onClick={() => setPaymentMethod(method)}
-                    className={`py-1.5 px-2 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${paymentMethod === method ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md shadow-sky-500/25 border border-sky-400 dark:border-sky-500" : "bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200/80 dark:border-slate-700"}`}
+                    onClick={() => {
+                      setPaymentMethod(method);
+                      if (method === "CARD" && balanceDue > 0) {
+                        setAmountReceived(String(balanceDue));
+                      }
+                    }}
+                    className={`py-1.5 px-2 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${paymentMethod === method ? "bg-blue-600 text-white shadow-xs font-bold border border-blue-600" : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"}`}
                   >
-                    <span className="text-sm">{icon}</span>
-                    <span className="text-xs font-semibold">{label}</span>
+                    <Icon className="w-3.5 h-3.5" />
+                    <span className="text-xs font-semibold flex items-center gap-1">
+                      {label}
+                      {paymentMethod === method && (
+                        <span className="bg-white/20 px-1 py-0.2 rounded-full text-[10px] font-bold">
+                          <Check className="w-2.5 h-2.5 inline stroke-[3]" />
+                        </span>
+                      )}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -320,16 +322,16 @@ export function RepairPaymentModal({
                   onClick={() => setPrintBill(!printBill)}
                   className={`py-1.5 px-2 rounded-lg font-medium transition-all flex items-center justify-center gap-1 cursor-pointer ${
                     printBill
-                      ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md shadow-sky-500/25 border border-sky-400 dark:border-sky-500"
-                      : "bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200/80 dark:border-slate-700"
+                      ? "bg-blue-600 text-white shadow-xs font-bold"
+                      : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
-                  <span className="text-sm">🧾</span>
-                  <span className="text-xs font-semibold flex items-center gap-0.5">
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span className="text-xs font-semibold flex items-center gap-1">
                     Bill
                     {printBill && (
-                      <span className="text-[10px] bg-white/25 dark:bg-white/20 px-1 rounded-full font-bold">
-                        ✓
+                      <span className="bg-white/20 px-1 py-0.2 rounded-full text-[10px] font-bold">
+                        <Check className="w-2.5 h-2.5 inline stroke-[3]" />
                       </span>
                     )}
                   </span>
@@ -339,16 +341,16 @@ export function RepairPaymentModal({
                   onClick={() => setPrintInvoice(!printInvoice)}
                   className={`py-1.5 px-2 rounded-lg font-medium transition-all flex items-center justify-center gap-1 cursor-pointer ${
                     printInvoice
-                      ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md shadow-sky-500/25 border border-sky-400 dark:border-sky-500"
-                      : "bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200/80 dark:border-slate-700"
+                      ? "bg-blue-600 text-white shadow-xs font-bold"
+                      : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
-                  <span className="text-sm">📑</span>
-                  <span className="text-xs font-semibold flex items-center gap-0.5">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span className="text-xs font-semibold flex items-center gap-1">
                     Invoice
                     {printInvoice && (
-                      <span className="text-[10px] bg-white/25 dark:bg-white/20 px-1 rounded-full font-bold">
-                        ✓
+                      <span className="bg-white/20 px-1 py-0.2 rounded-full text-[10px] font-bold">
+                        <Check className="w-2.5 h-2.5 inline stroke-[3]" />
                       </span>
                     )}
                   </span>
@@ -411,7 +413,7 @@ export function RepairPaymentModal({
                 type="number"
                 value={amountReceived}
                 onChange={(e) => setAmountReceived(e.target.value)}
-                className={`w-full pl-12 pr-4 py-1.5 bg-slate-50 dark:bg-slate-900 rounded-xl text-slate-900 dark:text-white text-xl text-center font-black border-2 transition-all focus:outline-none placeholder-slate-400 dark:placeholder-slate-600 ${amountReceived && isValidAmount ? "border-emerald-500/70 dark:border-emerald-500/70 focus:border-emerald-500 text-emerald-600 dark:text-emerald-400" : amountReceived && !isValidAmount ? "border-amber-500/70 dark:border-amber-500/70 focus:border-amber-500" : "border-slate-200 dark:border-slate-700 focus:border-sky-500"}`}
+                className={`w-full pl-12 pr-4 py-1.5 bg-slate-50 rounded-xl text-slate-900 text-xl text-center font-black border-2 transition-all focus:outline-none placeholder-slate-400 ${amountReceived && isValidAmount ? "border-emerald-500/70 focus:border-emerald-500 text-emerald-600" : amountReceived && !isValidAmount ? "border-amber-500/70 focus:border-amber-500" : "border-slate-300 focus:border-sky-500"}`}
                 placeholder="0"
                 autoFocus
               />
@@ -470,7 +472,14 @@ export function RepairPaymentModal({
             }
             className="py-2.5 px-4 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
           >
-            {loading ? "⏳ Processing..." : "Complete Only"}
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              "Complete Only"
+            )}
           </button>
           <button
             onClick={() => handlePayment(printBill || printInvoice)}
@@ -483,7 +492,10 @@ export function RepairPaymentModal({
             className="py-2.5 px-6 bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer text-sm"
           >
             {loading ? (
-              "⏳ Processing..."
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Processing...
+              </>
             ) : printBill && printInvoice ? (
               "Complete & Print Both"
             ) : printBill ? (

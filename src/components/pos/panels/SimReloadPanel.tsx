@@ -466,7 +466,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                                 placeholder="Phone number (optional)"
                                 value={simPhoneNumber}
                                 onChange={(e) => setSimPhoneNumber(e.target.value)}
-                                className="w-full px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:border-indigo-500 dark:text-white"
+                                className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:border-indigo-500 text-slate-900"
                                 autoFocus
                               />
                               <div className="flex gap-2">
@@ -548,7 +548,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                       placeholder="e.g. 0771234567 (Optional)"
                       value={reloadPhone}
                       onChange={(e) => setReloadPhone(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-white font-mono text-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400"
+                      className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 font-mono text-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400"
                     />
                   </div>
                 </div>
@@ -587,7 +587,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                       placeholder="Custom amount"
                       value={reloadAmount}
                       onChange={(e) => setReloadAmount(e.target.value)}
-                      className="w-full pl-11 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-white font-bold text-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all"
+                      className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 font-bold text-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all"
                     />
                   </div>
                 </div>
@@ -696,7 +696,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                       placeholder="Search phone, sale#..."
                       value={historySearch}
                       onChange={(e) => setHistorySearch(e.target.value)}
-                      className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-indigo-500 dark:text-white"
+                      className="pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl outline-none focus:border-indigo-500 text-slate-900 placeholder:text-slate-400"
                     />
                   </div>
                   <button
@@ -826,20 +826,20 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                   placeholder="e.g. Dialog 4G Pre-Paid SIM"
                   value={newSimName}
                   onChange={(e) => setNewSimName(e.target.value)}
-                  className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white transition-all"
+                  className="w-full px-3.5 py-2 text-xs bg-white border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-900 transition-all font-medium"
                   required
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                   Network / Provider *
                 </label>
                 <select
                   value={newSimProvider}
                   onChange={(e) => setNewSimProvider(e.target.value)}
-                  className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white transition-all"
+                  className="w-full px-3.5 py-2 text-xs bg-white border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-900 transition-all font-medium"
                 >
                   <option value="Dialog">Dialog</option>
                   <option value="Mobitel">Mobitel</option>
@@ -852,7 +852,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Selling Price (Rs.) *
                   </label>
                   <input
@@ -860,12 +860,12 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                     placeholder="200"
                     value={newSimPrice}
                     onChange={(e) => setNewSimPrice(e.target.value)}
-                    className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white font-mono font-bold transition-all"
+                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-900 font-mono font-bold transition-all"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Cost Price (Rs.)
                   </label>
                   <input
@@ -873,7 +873,7 @@ export function SimReloadPanel({ onClose, onAddToCart }: SimReloadPanelProps): J
                     placeholder="150"
                     value={newSimCost}
                     onChange={(e) => setNewSimCost(e.target.value)}
-                    className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-800 dark:text-white font-mono transition-all"
+                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-900 font-mono transition-all"
                   />
                 </div>
               </div>

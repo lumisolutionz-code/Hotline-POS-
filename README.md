@@ -1,6 +1,14 @@
-# React + TypeScript + Vite
+# Hotline POS Application
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> **Note**: For the full changelog of recent UI/UX improvements, icon migrations, 1366×768 resolution fixes, and keyboard shortcut updates, see [README_UPDATES.md](file:///d:/Documents/Hotline-Cellular/Hotline-POS-main/README_UPDATES.md) or the root [README.md](file:///d:/Documents/Hotline-Cellular/README.md).
+
+## Technology Stack
+- **Framework**: React 19 + TypeScript + Vite
+- **Desktop Runtime**: Electron
+- **Icons**: Lucide React (`lucide-react`)
+- **Styling**: Tailwind CSS v4
+
+## React + TypeScript + Vite
 
 Currently, two official plugins are available:
 

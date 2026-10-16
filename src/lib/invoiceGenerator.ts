@@ -1,11 +1,24 @@
 import { ShopSettings, getShopSettings } from "./settings";
-import { HOTLINE_LOGO_DATA_URL, HOTLINE_THERMAL_LOGO_DATA_URL } from "./logo";
+import {
+  HOTLINE_CELLULAR_LOGO_DATA_URL,
+  HOTLINE_LOGO_DATA_URL,
+  HOTLINE_THERMAL_LOGO_DATA_URL,
+  PHONE_KING_LOGO_DATA_URL,
+  phone_king_logo,
+} from "./logo";
+export { PHONE_KING_LOGO_DATA_URL, phone_king_logo };
 
 export interface InvoiceItem {
   description: string;
   quantity: number | string;
   unitPrice: number;
   total: number;
+  discount?: number;
+  totalBeforeDiscount?: number;
+  variant?: string;
+  imei?: string;
+  serialNumber?: string;
+  warranty?: string;
 }
 
 export interface InvoiceDetails {
@@ -61,7 +74,10 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
   const shopName = inv.billFrom?.companyName || inv.billFrom?.name || "Hotline Cellular";
   const shopRegNo = inv.billFrom?.regNo || "PV 00301591";
   const shopAddress = inv.billFrom?.streetAddress || "No 27, Katuwana Road, Homagama";
-  const shopCity = inv.billFrom?.cityZip || "Western Province, Sri Lanka";
+  const secondAddress = "No 1, Hanwella road, Padukka";
+  const combinedAddress = shopAddress.includes("Padukka")
+    ? shopAddress
+    : `${shopAddress} &nbsp;|&nbsp; ${secondAddress}`;
   const shopPhone = inv.billFrom?.phone || "0777309726 / 0777476279";
   const shopEmail = inv.billFrom?.email || "hotlinephoneshop@gmail.com";
 
@@ -264,6 +280,29 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
     .meta-val.strong {
       font-weight: 700;
       color: #0f172a;
+    }
+
+    /* Stacked price + discount in the Total column */
+    .item-total-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 2px;
+      line-height: 1.3;
+    }
+    .item-total-price {
+      font-size: 10.5px;
+      color: #1e293b;
+      font-weight: 600;
+      text-align: right;
+    }
+    .item-total-discount {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #e11d48;
+      text-align: right;
+      letter-spacing: 0.2px;
     }
 
     /* Standard Grid Table */
@@ -503,10 +542,10 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
     <!-- Header Row (Stationery Element: Relocated Bill From Details) -->
     <div class="stationery-element header-row">
       <div class="brand-logo-wrap">
-        <img class="brand-logo-img" src="${inv.logoUrl || HOTLINE_LOGO_DATA_URL}" alt="${escapeHtml(shopName)}" />
+        <img class="brand-logo-img" src="${inv.logoUrl || PHONE_KING_LOGO_DATA_URL || HOTLINE_LOGO_DATA_URL}" alt="${escapeHtml(shopName)}" />
         <div class="brand-bill-from">
           <div class="brand-company-title">${escapeHtml(shopName)}</div>
-          <div class="brand-address-line">${escapeHtml(shopAddress)}, ${escapeHtml(shopCity)}</div>
+          <div class="brand-address-line">${combinedAddress}</div>
           <div class="brand-contact-line">Hotlines: ${escapeHtml(shopPhone)} | Reg No: ${escapeHtml(shopRegNo)}</div>
           <div class="brand-address-line" style="font-size: 8.5px; color: #475569;">${escapeHtml(shopEmail)}</div>
         </div>
@@ -590,10 +629,15 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
           ${inv.items
             .map(
               (item) => `<tr>
-                <td class="col-desc"><strong>${item.description}</strong></td>
+                <td class="col-desc">${item.description.includes("<strong") ? item.description : `<strong>${escapeHtml(item.description)}</strong>`}</td>
                 <td class="col-qty">${item.quantity}</td>
                 <td class="col-price">${item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td class="col-total">${item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td class="col-total">${item.discount && item.discount > 0 ? `
+                  <div class="item-total-stack">
+                    <span class="item-total-price">${(item.totalBeforeDiscount !== undefined ? item.totalBeforeDiscount : (Number(item.unitPrice) * Number(item.quantity))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span class="item-total-discount">-${item.discount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                ` : item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>`,
             )
             .join("")}
@@ -619,58 +663,26 @@ export function generateInvoiceHtmlFromDetails(inv: InvoiceDetails): string {
             <td class="sum-label">Subtotal</td>
             <td class="sum-val">Rs. ${inv.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
-          ${
-            inv.discount && inv.discount > 0
-              ? `<tr>
-            <td class="sum-label">Discount</td>
-            <td class="sum-val" style="color: #e11d48; font-weight: 600;">Rs. - ${inv.discount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>`
-              : ""
-          }
-          ${
-            inv.tax !== undefined
-              ? `<tr>
+          <tr>
+            <td class="sum-label">Total Discount</td>
+            <td class="sum-val" style="color: #e11d48; font-weight: 600;">Rs. ${inv.discount && inv.discount > 0 ? "- " + inv.discount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}</td>
+          </tr>
+          <tr>
             <td class="sum-label">Sales Tax</td>
-            <td class="sum-val">Rs. ${inv.tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>`
-              : inv.taxOrDiscount
-              ? `<tr>
-            <td class="sum-label">${escapeHtml(inv.taxOrDiscountLabel || "Sales Tax")}</td>
-            <td class="sum-val">${inv.taxOrDiscount < 0 ? "Rs. - " + Math.abs(inv.taxOrDiscount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Rs. " + inv.taxOrDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>`
-              : `<tr>
-            <td class="sum-label">Sales Tax</td>
-            <td class="sum-val">Rs. 0.00</td>
-          </tr>`
-          }
-          ${
-            inv.otherCharges && inv.otherCharges > 0
-              ? `<tr>
-            <td class="sum-label">Other</td>
-            <td class="sum-val">Rs. ${inv.otherCharges.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>`
-              : ""
-          }
+            <td class="sum-val">Rs. ${(inv.tax !== undefined ? inv.tax : (inv.taxOrDiscount && inv.taxOrDiscount > 0 ? inv.taxOrDiscount : 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>
           <tr>
             <td class="sum-label grand-total">Grand Total</td>
             <td class="sum-val grand-total">Rs. ${inv.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
-          ${
-            inv.amountPaid !== undefined
-              ? `<tr>
+          <tr>
             <td class="sum-label">Amount Paid</td>
-            <td class="sum-val">Rs. ${inv.amountPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>`
-              : ""
-          }
-          ${
-            inv.balanceDue !== undefined
-              ? `<tr>
+            <td class="sum-val">Rs. ${(inv.amountPaid !== undefined ? inv.amountPaid : inv.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>
+          <tr>
             <td class="sum-label">Balance / Change</td>
-            <td class="sum-val">Rs. ${inv.balanceDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-          </tr>`
-              : ""
-          }
+            <td class="sum-val">Rs. ${(inv.balanceDue !== undefined ? inv.balanceDue : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -738,38 +750,64 @@ export function generateSaleInvoiceHtml(
   const hasMobile = hasMobilePhoneSale(sale);
   const warrantyText = hasMobile ? getSaleWarrantyText(sale) : "";
 
+  let sumGross = 0;
+  let sumItemDisc = 0;
+
   const items: InvoiceItem[] = (sale.items || []).map((it: any) => {
-    let desc = it.productName || it.name || "Item";
-    const imei = it.imei1 || it.imei;
-    const imei2 = it.imei2;
-    const serial = it.serialNumber || it.serial;
+    const rawName = it.productName || it.name || "Item";
     const isMobile = isMobilePhoneItem(it);
+    const variantText = safeGetVariantText(it);
+    const imeiText = safeGetImeiText(it);
+    const serialText = safeGetSerialText(it);
+    const itWarranty = safeGetWarrantyText(it, isMobile, warrantyText);
 
-    if (imei) {
-      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">IMEI: ${escapeHtml(imei)}${imei2 ? ` / ${escapeHtml(imei2)}` : ""}</span>`;
-    } else if (serial) {
-      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">S/N: ${escapeHtml(serial)}</span>`;
+    let desc = `<strong>${escapeHtml(rawName.trim())}</strong>`;
+    if (variantText) {
+      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">Variant: ${escapeHtml(variantText)}</span>`;
     }
-
-    if (isMobile) {
-      const itWarranty = getItemWarrantyText(it) || "1 Year Warranty";
+    if (serialText) {
+      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">S/N: ${escapeHtml(serialText)}</span>`;
+    }
+    if (imeiText) {
+      desc += `<br/><span style="font-size: 10px; color: #475569; font-weight: 600;">IMEI: ${escapeHtml(imeiText)}</span>`;
+    }
+    if (itWarranty) {
       desc += `<br/><span style="font-size: 10px; color: #1e40af; font-weight: 700;">Warranty: ${escapeHtml(itWarranty)}</span>`;
     }
 
+    const qty = Number(it.quantity || it.qty || 1);
+    const price = Number(it.unitPrice || 0);
+    const itemDisc = Number(it.discount || 0);
+    const lineTotal = Number(it.total !== undefined ? it.total : qty * price - itemDisc * qty);
+    const calcDisc = itemDisc > 0 ? (itemDisc * qty) : Math.max(0, qty * price - lineTotal);
+    const lineTotalBeforeDisc = calcDisc > 0 ? (qty * price) : lineTotal;
+
+    sumGross += (qty * price);
+    sumItemDisc += calcDisc;
+
     return {
       description: desc,
-      quantity: it.quantity || 1,
-      unitPrice: Number(it.unitPrice || 0),
-      total: Number(it.total || (Number(it.unitPrice || 0) * (it.quantity || 1))),
+      quantity: qty,
+      unitPrice: price,
+      total: lineTotal,
+      discount: calcDisc,
+      totalBeforeDiscount: lineTotalBeforeDisc,
     };
   });
 
-  const subtotal = Number(sale.subtotal || sale.grandTotal || 0);
-  const discount = Number(sale.discountTotal || 0);
+  const subtotal = sumGross > 0 ? sumGross : Number(sale.subtotal || 0);
+  const saleDiscount = Number(sale.discountTotal !== undefined ? sale.discountTotal : (sale.discountAmount || 0));
+  const discount = Math.max(sumItemDisc, saleDiscount);
   const tax = Number(sale.tax || sale.taxTotal || 0);
-  const grandTotal = Number(sale.grandTotal || (subtotal - discount + tax));
-  const amountPaid = Number(sale.amountPaid || grandTotal);
-  const changeGiven = Number(sale.changeGiven || 0);
+  const grandTotal = Math.max(0, subtotal - discount + tax);
+  let amountPaid = Number(sale.amountPaid || 0);
+  if (!amountPaid && Array.isArray(sale.payments) && sale.payments.length > 0) {
+    amountPaid = sale.payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+  }
+  if (!amountPaid && grandTotal > 0) {
+    amountPaid = grandTotal;
+  }
+  const changeGiven = Number(sale.changeGiven !== undefined ? sale.changeGiven : Math.max(0, amountPaid - grandTotal));
 
   const custEmail = customerEmail || sale.customer?.email;
 
@@ -1057,6 +1095,171 @@ export interface DeviceVariants {
 /**
  * Extract specifically RAM, Storage, and Color variants for a device item
  */
+/**
+ * Safely extracts human-readable variant display text from any item format.
+ * Prevents any '[object Object]' or invalid representation.
+ */
+export function safeGetVariantText(item: any): string {
+  if (!item) return "";
+
+  // 1. Snapshot display string (from DB populated sale item)
+  if (item.variantSnapshot && typeof item.variantSnapshot === "object") {
+    if (typeof item.variantSnapshot.display === "string" && item.variantSnapshot.display.trim()) {
+      const d = item.variantSnapshot.display.trim();
+      if (d !== "[object Object]") return d;
+    }
+    if (Array.isArray(item.variantSnapshot.attributes) && item.variantSnapshot.attributes.length > 0) {
+      const parts = item.variantSnapshot.attributes
+        .map((a: any) => (typeof a === "object" ? (a?.value || a?.val || a?.name || "") : String(a || "")))
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join(" - ");
+    }
+  }
+
+  // 2. Direct string fields
+  if (typeof item.variantDisplay === "string" && item.variantDisplay.trim() && item.variantDisplay.trim() !== "[object Object]") {
+    return item.variantDisplay.trim();
+  }
+  if (typeof item.variantName === "string" && item.variantName.trim() && item.variantName.trim() !== "[object Object]") {
+    return item.variantName.trim();
+  }
+  if (typeof item.variant === "string" && item.variant.trim() && item.variant.trim() !== "[object Object]") {
+    if (!/^[a-f\d]{24}$/i.test(item.variant.trim())) {
+      return item.variant.trim();
+    }
+  }
+
+  // 3. Variant as populated object
+  if (item.variant && typeof item.variant === "object") {
+    if (typeof item.variant.title === "string" && item.variant.title.trim()) return item.variant.title.trim();
+    if (typeof item.variant.name === "string" && item.variant.name.trim()) return item.variant.name.trim();
+
+    if (Array.isArray(item.variant.attributes) && item.variant.attributes.length > 0) {
+      const parts = item.variant.attributes
+        .map((a: any) => (typeof a === "object" ? (a?.value || a?.val || a?.name || "") : String(a || "")))
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join(" - ");
+    } else if (item.variant.attributes && typeof item.variant.attributes === "object") {
+      const parts = Object.values(item.variant.attributes)
+        .map((v: any) => (typeof v === "object" ? (v?.value || v?.name || "") : String(v || "")))
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join(" - ");
+    }
+  }
+
+  // 4. Fallback to extractDeviceVariants
+  const v = extractDeviceVariants(item);
+  const parts: string[] = [];
+  if (v.storage) parts.push(v.storage);
+  if (v.color) parts.push(v.color);
+  if (v.ram) parts.push(v.storage ? v.ram : `RAM: ${v.ram}`);
+  if (parts.length > 0) return parts.join(" - ");
+
+  return "";
+}
+
+/**
+ * Safely extracts human-readable warranty text from any item format.
+ * Prevents any '[object Object]' or invalid representation.
+ */
+export function safeGetWarrantyText(item: any, isDevice = false, fallbackWarrantyText = ""): string {
+  if (!item) return "";
+
+  // 1. Populated warranty document
+  if (item.warranty && typeof item.warranty === "object") {
+    if (typeof item.warranty.description === "string" && item.warranty.description.trim()) {
+      const d = item.warranty.description.trim();
+      if (d !== "[object Object]") return d;
+    }
+    if (item.warranty.durationMonths && Number(item.warranty.durationMonths) > 0) {
+      const m = Number(item.warranty.durationMonths);
+      const typeStr = item.warranty.warrantyType
+        ? (item.warranty.warrantyType === "BRAND" ? "Official Brand Warranty" : `${item.warranty.warrantyType} Warranty`)
+        : "Warranty";
+      if (m === 12) return `1 Year ${typeStr}`;
+      if (m % 12 === 0) return `${m / 12} Years ${typeStr}`;
+      return `${m} Months ${typeStr}`;
+    }
+    if (item.warranty.warrantyType) {
+      return item.warranty.warrantyType === "BRAND" ? "1 Year Official Brand Warranty" : `${item.warranty.warrantyType} Warranty`;
+    }
+  }
+
+  // 2. Direct string fields
+  if (typeof item.warrantyText === "string" && item.warrantyText.trim() && item.warrantyText.trim() !== "[object Object]") {
+    return item.warrantyText.trim();
+  }
+  if (typeof item.warrantyDescription === "string" && item.warrantyDescription.trim() && item.warrantyDescription.trim() !== "[object Object]") {
+    return item.warrantyDescription.trim();
+  }
+  if (typeof item.warrantyPeriod === "string" && item.warrantyPeriod.trim() && item.warrantyPeriod.trim() !== "[object Object]") {
+    return item.warrantyPeriod.trim();
+  }
+  if (typeof item.warranty === "string" && item.warranty.trim() && item.warranty.trim() !== "[object Object]") {
+    return item.warranty.trim();
+  }
+
+  // 3. Numeric durations
+  const dur = item.warrantyDuration ?? item.warrantyMonths ?? item.durationMonths ?? item.product?.warrantyDuration;
+  if (dur !== undefined && dur !== null && Number(dur) > 0) {
+    const num = Number(dur);
+    const isYears = num <= 5;
+    const months = isYears ? num * 12 : num;
+    const type = item.warrantyType || item.product?.warrantyType || "";
+    const typeStr = type && typeof type === "string"
+      ? (type === "BRAND" ? "Official Brand Warranty" : `${type} Warranty`)
+      : "Warranty";
+    if (months === 12) return `1 Year ${typeStr}`;
+    if (months % 12 === 0) return `${months / 12} Years ${typeStr}`;
+    return `${months} Months ${typeStr}`;
+  }
+
+  // 4. Device fallback
+  if (isDevice) {
+    if (fallbackWarrantyText && typeof fallbackWarrantyText === "string" && fallbackWarrantyText.trim() !== "[object Object]") {
+      return fallbackWarrantyText.trim();
+    }
+    return "1 Year Official Brand Warranty";
+  }
+
+  return "";
+}
+
+/**
+ * Safely extracts IMEI text
+ */
+export function safeGetImeiText(item: any): string {
+  if (!item) return "";
+  const imei1 = item.imei1 || item.imei;
+  const imei2 = item.imei2;
+  if (!imei1 && !imei2) {
+    const s = String(item.serialNumber || item.serial || "").trim();
+    if (/^\d{14,16}$/.test(s)) return s;
+    return "";
+  }
+  const p1 = imei1 ? String(imei1).trim() : "";
+  const p2 = imei2 ? String(imei2).trim() : "";
+  if (p1 && p2 && p1 !== p2) return `${p1} / ${p2}`;
+  return p1 || p2;
+}
+
+/**
+ * Safely extracts Serial Number text (ignoring if identical to IMEI)
+ */
+export function safeGetSerialText(item: any): string {
+  if (!item) return "";
+  const s = String(item.serialNumber || item.serial || "").trim();
+  if (!s || s === "-" || s === "N/A" || s === "[object Object]") return "";
+  const imei = String(item.imei1 || item.imei || "").trim();
+  const imei2 = String(item.imei2 || "").trim();
+  if (s === imei || s === imei2) return "";
+  if (!imei && /^\d{14,16}$/.test(s)) return "";
+  return s;
+}
+
 export function extractDeviceVariants(item: any): DeviceVariants {
   const result: DeviceVariants = {};
   if (!item) return result;
@@ -1223,6 +1426,31 @@ export function getSaleWarrantyText(sale: any): string {
 }
 
 /**
+ * Format branch address whether string or structured object
+ */
+export function formatBranchAddress(branchOrAddress: any): string {
+  if (!branchOrAddress) return "";
+  if (typeof branchOrAddress === "string") return branchOrAddress.trim();
+  if (typeof branchOrAddress === "object") {
+    if (branchOrAddress.address) {
+      return formatBranchAddress(branchOrAddress.address);
+    }
+    const parts = [
+      branchOrAddress.street,
+      branchOrAddress.city,
+      branchOrAddress.province,
+      branchOrAddress.postalCode,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(", ");
+    const vals = Object.values(branchOrAddress).filter(
+      (v) => typeof v === "string" && v.trim().length > 0
+    );
+    if (vals.length > 0) return vals.join(", ");
+  }
+  return "";
+}
+
+/**
  * Standard 80mm (7.8cm) Thermal Bill Generator
  * Styled with center alignment, bold text, and prominent header branding
  */
@@ -1234,10 +1462,11 @@ export function generateSaleBillHtml(
   customerEmail?: string,
 ): string {
   const settings = shopSettings || getShopSettings();
+  const branchAddr = formatBranchAddress(sale?.branch?.address || sale?.branch);
   const shopName = settings.shopName || "New Challenge (Pvt) Ltd";
-  const address = settings.address || "No 27, Katuwana Road, Homagama";
-  const phone = settings.phone || "0777309726 / 0777476279";
-  const email = settings.email || "hotlinephoneshop@gmail.com";
+  const address = branchAddr || settings.address || "No 27, Katuwana Road, Homagama";
+  const phone = (sale?.branch?.phone ? String(sale.branch.phone).trim() : "") || settings.phone || "0777309726 / 0777476279";
+  const email = (sale?.branch?.email ? String(sale.branch.email).trim() : "") || settings.email || "hotlinephoneshop@gmail.com";
 
   const saleNumber = sale.saleNumber || "N/A";
   const saleDate = sale.createdAt ? new Date(sale.createdAt).toLocaleString() : new Date().toLocaleString();
@@ -1251,68 +1480,93 @@ export function generateSaleBillHtml(
 
   const hasMobile = hasMobilePhoneSale(sale);
   const warrantyText = hasMobile ? getSaleWarrantyText(sale) : "";
-  const isPhone = isPhoneSale(sale);
+
+  // Format payment method title & upper
+  const formatMethod = (m: string) => {
+    const raw = String(m || "").trim().toUpperCase();
+    if (raw === "CASH") return "Cash";
+    if (raw === "CARD") return "Card";
+    if (raw === "BANK_TRANSFER" || raw === "BANK") return "Bank Transfer";
+    if (raw === "CHEQUE") return "Cheque";
+    if (raw === "ONLINE") return "Online";
+    if (raw === "CREDIT") return "Credit";
+    if (raw === "SPLIT") return "Split";
+    return raw.charAt(0) + raw.slice(1).toLowerCase();
+  };
+
+  let paymentMethodTitle = "Cash";
+  let paymentMethodUpper = "CASH";
+
+  if (Array.isArray(sale.payments) && sale.payments.length > 0) {
+    const validPayments = sale.payments.filter((p: any) => p && (Number(p.amount) > 0 || p.method));
+    const methods = Array.from(new Set(validPayments.map((p: any) => p.method).filter(Boolean)));
+    if (methods.length === 1) {
+      paymentMethodTitle = formatMethod(String(methods[0]));
+      paymentMethodUpper = String(methods[0]).toUpperCase();
+    } else if (methods.length > 1) {
+      paymentMethodTitle = methods.map((m: any) => formatMethod(String(m))).join(" / ");
+      paymentMethodUpper = methods.map((m: any) => String(m).toUpperCase()).join(" / ");
+    }
+  } else if (sale.paymentMethod || sale.paymentType || sale.payment_method) {
+    const p = String(sale.paymentMethod || sale.paymentType || sale.payment_method);
+    paymentMethodTitle = formatMethod(p);
+    paymentMethodUpper = p.toUpperCase();
+  }
+
+  let sumGross = 0;
+  let sumItemDisc = 0;
 
   const itemsHtml = sale.items && sale.items.length > 0
     ? sale.items
         .map((item: any) => {
           const rawName = item.productName || item.name || "Item";
           const isDevice = isDeviceItem(item);
-          const variants = extractDeviceVariants(item);
+          const variantText = safeGetVariantText(item);
+          const imeiText = safeGetImeiText(item);
+          const serialText = safeGetSerialText(item);
+          const itemWarranty = safeGetWarrantyText(item, isDevice, warrantyText);
 
-          // Build variants line (only RAM, Storage, Color)
-          const variantParts: string[] = [];
-          if (variants.ram) variantParts.push(`RAM: ${variants.ram}`);
-          if (variants.storage) variantParts.push(`Storage: ${variants.storage}`);
-          if (variants.color) variantParts.push(`Color: ${variants.color}`);
-          const variantLine = variantParts.join(" | ");
-
-          // Clean display name
           const displayName = escapeHtml(rawName.trim());
-
-          // Identifier: IMEI vs S/N
-          const imei = item.imei1 || item.imei;
-          const imei2 = item.imei2;
-          const serial = item.serialNumber || item.serial;
-          let identifierLine = "";
-          if (imei) {
-            identifierLine = `IMEI: ${escapeHtml(imei)}${imei2 ? ` / ${escapeHtml(imei2)}` : ""}`;
-          } else if (serial) {
-            if (isDevice || /^\d{14,16}$/.test(String(serial).trim())) {
-              identifierLine = `IMEI: ${escapeHtml(serial)}`;
-            } else {
-              identifierLine = `S/N: ${escapeHtml(serial)}`;
-            }
-          }
 
           const qty = Number(item.quantity || item.qty || 1);
           const price = Number(item.unitPrice || 0);
           const itemDisc = Number(item.discount || 0);
           const total = Number(item.total !== undefined ? item.total : qty * price - itemDisc * qty);
           const calcDisc = itemDisc > 0 ? (itemDisc * qty) : Math.max(0, qty * price - total);
+          const lineTotalBeforeDisc = calcDisc > 0 ? (qty * price) : total;
+
+          sumGross += (qty * price);
+          sumItemDisc += calcDisc;
 
           return `
             <div class="item-block">
               <div class="item-row">
                 <span class="item-name">${displayName}</span>
-                <span class="item-amount">Rs. ${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              ${variantLine ? `<div class="item-variant">${escapeHtml(variantLine)}</div>` : ""}
-              ${identifierLine ? `<div class="item-identifier">${identifierLine}</div>` : ""}
-              <div class="item-subrow">
-                <span class="item-calc">${qty} x Rs. ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                ${calcDisc > 0 ? `<span class="item-disc">Disc: Rs. - ${calcDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` : ""}
+              ${variantText ? `<div class="item-variant">Variant: ${escapeHtml(variantText)}</div>` : ""}
+              ${imeiText ? `<div class="item-identifier">IMEI: ${escapeHtml(imeiText)}</div>` : ""}
+              ${serialText ? `<div class="item-identifier">S/N: ${escapeHtml(serialText)}</div>` : ""}
+              ${itemWarranty ? `<div class="item-identifier">Warranty: ${escapeHtml(itemWarranty)}</div>` : ""}
+              <div class="item-calc-row" style="margin-top: 5px;">
+                <span class="item-calc-qty">${qty} x ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span class="item-calc-total">${lineTotalBeforeDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
+              ${calcDisc > 0 ? `
+              <div class="item-disc-row" style="margin-top: 5px;">
+                <span></span>
+                <span class="item-disc-label" style="font-weight: 800;">-${calcDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>` : ""}
             </div>
           `;
         })
         .join("")
     : `<div class="item-block"><div class="item-name">No items</div></div>`;
 
-  const subtotal = Number(sale.subtotal || 0);
-  const discountTotal = Number(sale.discountTotal !== undefined ? sale.discountTotal : (sale.discountAmount || 0));
+  const subtotal = sumGross > 0 ? sumGross : Number(sale.subtotal || 0);
+  const saleDiscount = Number(sale.discountTotal !== undefined ? sale.discountTotal : (sale.discountAmount || 0));
+  const discountTotal = Math.max(sumItemDisc, saleDiscount);
   const taxTotal = Number(sale.tax || sale.taxTotal || 0);
-  const grandTotal = Number(sale.grandTotal !== undefined ? sale.grandTotal : (sale.finalTotal !== undefined ? sale.finalTotal : (sale.total || 0)));
+  const grandTotal = Math.max(0, subtotal - discountTotal + taxTotal);
   let amountPaid = Number(sale.amountPaid || 0);
   if (!amountPaid && Array.isArray(sale.payments) && sale.payments.length > 0) {
     amountPaid = sale.payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
@@ -1320,388 +1574,436 @@ export function generateSaleBillHtml(
   if (!amountPaid && grandTotal > 0) {
     amountPaid = grandTotal;
   }
-  const changeGiven = Number(sale.changeGiven || 0);
+  const changeGiven = Number(sale.changeGiven !== undefined ? sale.changeGiven : Math.max(0, amountPaid - grandTotal));
 
   return `<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Bill - ${escapeHtml(saleNumber)}</title>
-    <style>
-      @page {
-        margin: 0;
-        size: 70mm auto;
-      }
-      * {
-        box-sizing: border-box;
-      }
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bill - ${escapeHtml(saleNumber)}</title>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 0;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 80mm;
+      background: #f1f5f9;
+      font-family: 'Courier New', Courier, monospace, system-ui, -apple-system, sans-serif;
+      color: #000000;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      display: flex;
+      justify-content: center;
+      padding: 10px 0;
+    }
+    @media print {
       html, body {
-        width: 70mm;
-        max-width: 70mm;
+        background: #ffffff !important;
+        padding: 0 !important;
+        width: 70mm !important;
+        max-width: 70mm !important;
       }
-      body {
-        font-family: 'Courier New', Courier, monospace, system-ui, -apple-system, sans-serif;
-        font-size: 13px;
-        font-weight: 700;
-        line-height: 1.3;
-        color: #000000;
-        background: #ffffff;
-        margin: 0 auto;
-        padding: 5px 2px;
-        width: 70mm;
-        max-width: 70mm;
-        text-align: center;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
+      .receipt-paper {
+        box-shadow: none !important;
+        border: none !important;
+        width: 70mm !important;
+        max-width: 70mm !important;
+        padding: 4mm 2mm 8mm 2mm !important;
       }
-      .bill-container {
-        width: 100%;
-        max-width: 70mm;
-        margin: 0 auto;
-        text-align: center;
-      }
-      .bill-container.phone-bill {
-        min-height: 175mm;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        padding: 12mm 2mm 18mm 2mm;
-      }
-      .phone-bill .bill-spacer {
-        flex: 1 1 auto;
-        min-height: 12mm;
-      }
-      /* Top section: extra bold & prominent with Logo */
-      .top-section {
-        margin-bottom: 2px;
-        text-align: center;
-      }
-      .thermal-logo-wrap {
-        text-align: center;
-        margin-bottom: 4px;
-      }
-      .thermal-logo {
-        max-width: 52mm;
-        max-height: 25mm;
-        height: auto;
-        display: block;
-        margin: 0 auto;
-        object-fit: contain;
-        filter: grayscale(100%) contrast(150%);
-        -webkit-filter: grayscale(100%) contrast(150%);
-      }
-      .shop-name {
-        font-size: 18px;
-        font-weight: 900;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        margin: 0 0 1px 0;
-        line-height: 1.15;
-      }
-      .shop-legal {
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        margin: 1px 0;
-      }
-      .shop-reg {
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-        margin: 1px 0;
-      }
-      .shop-info {
-        font-size: 12px;
-        font-weight: 800;
-        margin: 1px 0;
-        line-height: 1.25;
-      }
-      .divider-double {
-        border-top: 1.5px dashed #000000;
-        margin: 3.5px 0;
-      }
-      .divider-solid {
-        border-top: 1px solid #000000;
-        margin: 2.5px 0;
-      }
-      .bill-title {
-        font-size: 15px;
-        font-weight: 900;
-        letter-spacing: 0.8px;
-        text-transform: uppercase;
-        padding: 2px 0;
-        text-align: center;
-      }
-      .meta-section {
-        font-size: 12px;
-        font-weight: 700;
-        margin: 2px 0;
-        line-height: 1.35;
-        width: 100%;
-      }
-      .meta-line {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        width: 100%;
-        margin: 1.5px 0;
-      }
-      .meta-label {
-        text-align: left;
-      }
-      .meta-val {
-        text-align: right;
-        white-space: nowrap;
-      }
-      .section-heading {
-        font-size: 13.5px;
-        font-weight: 900;
-        letter-spacing: 0.8px;
-        text-transform: uppercase;
-        padding: 2px 0;
-        text-align: center;
-      }
-      .items-container {
-        margin: 3px 0;
-        text-align: left;
-        width: 100%;
-      }
-      .item-block {
-        margin-bottom: 5px;
-        padding-bottom: 5px;
-        border-bottom: 1px dashed #000000;
-        text-align: left;
-        width: 100%;
-      }
-      .item-block:last-child {
-        border-bottom: none;
-        padding-bottom: 0;
-        margin-bottom: 1px;
-      }
-      .item-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 6px;
-        width: 100%;
-      }
-      .item-name {
-        font-size: 13px;
-        font-weight: 800;
-        text-align: left;
-        flex: 1;
-        word-break: break-word;
-        line-height: 1.25;
-      }
-      .item-amount {
-        font-size: 13px;
-        font-weight: 800;
-        text-align: right;
-        white-space: nowrap;
-        margin-left: 6px;
-      }
-      .item-variant {
-        font-size: 11.5px;
-        font-weight: 700;
-        letter-spacing: 0.2px;
-        text-align: left;
-        margin-top: 1.5px;
-        color: #111;
-        word-break: break-word;
-      }
-      .item-identifier {
-        font-size: 11.5px;
-        font-weight: 800;
-        letter-spacing: 0.3px;
-        text-align: left;
-        margin-top: 1px;
-        color: #000;
-        word-break: break-all;
-      }
-      .item-subrow {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 12px;
-        font-weight: 700;
-        color: #222;
-        margin-top: 1.5px;
-        width: 100%;
-      }
-      .item-calc {
-        text-align: left;
-      }
-      .item-disc {
-        text-align: right;
-        font-weight: 800;
-      }
-      .totals-container {
-        font-size: 13px;
-        font-weight: 700;
-        margin: 2px 0;
-        line-height: 1.35;
-        width: 100%;
-      }
-      .total-line {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        width: 100%;
-        margin: 1.5px 0;
-      }
-      .total-label {
-        text-align: left;
-      }
-      .total-val {
-        text-align: right;
-        white-space: nowrap;
-      }
-      .grand-total {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        width: 100%;
-        font-size: 16.5px;
-        font-weight: 900;
-        letter-spacing: 0.5px;
-        padding: 3px 0;
-        margin: 1.5px 0;
-      }
-      .footer-section {
-        margin-top: 4px;
-        font-size: 12px;
-        font-weight: 700;
-        line-height: 1.35;
-        text-align: center;
-      }
-      .footer-line {
-        margin: 1px 0;
-      }
-      .footer-brand {
-        font-size: 13.5px;
-        font-weight: 900;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        margin: 1.5px 0;
-      }
-      .footer-warranty {
-        font-weight: 800;
-        letter-spacing: 0.3px;
-      }
-      .powered-by {
-        font-size: 10.5px;
-        font-weight: 800;
-        letter-spacing: 0.3px;
-        text-align: center;
-        padding: 2px 0;
-        margin: 1px 0;
-      }
-      @media print {
-        html, body {
-          width: 70mm !important;
-          max-width: 70mm !important;
-          margin: 0 auto !important;
-          padding: 0 !important;
-        }
-        .bill-container {
-          width: 70mm !important;
-          max-width: 70mm !important;
-        }
-        .bill-container.phone-bill {
-          min-height: 175mm !important;
-          padding: 12mm 2mm 18mm 2mm !important;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="bill-container ${isPhone ? "phone-bill" : ""}">
-      <div class="top-section">
-        <div class="thermal-logo-wrap">
-          <img class="thermal-logo" src="${HOTLINE_THERMAL_LOGO_DATA_URL}" alt="Hotline Cellular" />
-        </div>
-        <div class="shop-name">HOTLINE CELLULAR</div>
-        <div class="shop-legal">${escapeHtml(shopName)}</div>
-        <div class="shop-reg">Reg No: ${escapeHtml(settings.regNo || "PV 00301591")}</div>
-        <div class="shop-info">${escapeHtml(address)}</div>
-        <div class="shop-info">Hotlines: ${escapeHtml(phone)}</div>
-        ${email ? `<div class="shop-info">Email: ${escapeHtml(email)}</div>` : ""}
+    }
+    .receipt-paper {
+      width: 76mm;
+      max-width: 76mm;
+      background: #ffffff;
+      padding: 6mm 4mm 10mm 4mm;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      text-align: center;
+    }
+    /* Top Section with Logo */
+    .top-section {
+      text-align: center;
+      margin-bottom: 4px;
+    }
+    .thermal-logo-wrap {
+      text-align: center;
+      margin-bottom: 4px;
+      padding: 2px 0;
+    }
+    .thermal-logo {
+      max-width: 52mm;
+      max-height: 25mm;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+      object-fit: contain;
+      filter: grayscale(100%) contrast(150%);
+      -webkit-filter: grayscale(100%) contrast(150%);
+    }
+    .shop-name {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin: 1px 0;
+      line-height: 1.15;
+    }
+    .shop-legal {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin: 1px 0;
+    }
+    .shop-reg {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      margin: 1px 0;
+    }
+    .shop-info {
+      font-size: 11.5px;
+      font-weight: 800;
+      margin: 1px 0;
+      line-height: 1.25;
+    }
+    /* Dividers */
+    .divider-double {
+      border-top: 1.5px dashed #000000;
+      margin: 4px 0;
+    }
+    .divider-solid {
+      border-top: 1px solid #000000;
+      margin: 3px 0;
+    }
+    /* Bill Title */
+    .bill-title {
+      font-size: 15px;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      padding: 2px 0;
+      text-align: center;
+    }
+    /* Meta Section */
+    .meta-section {
+      font-size: 12px;
+      font-weight: 700;
+      margin: 2px 0;
+      line-height: 1.35;
+      width: 100%;
+    }
+    .meta-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      margin: 1.5px 0;
+    }
+    .meta-label {
+      text-align: left;
+    }
+    .meta-val {
+      text-align: right;
+      white-space: nowrap;
+    }
+    /* Section Heading */
+    .section-heading {
+      font-size: 13.5px;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      padding: 2px 0;
+      text-align: center;
+    }
+    /* Items Container */
+    .items-container {
+      margin: 3px 0;
+      text-align: left;
+      width: 100%;
+    }
+    .item-block {
+      margin-bottom: 5px;
+      padding-bottom: 5px;
+      border-bottom: 1px dashed #000000;
+      text-align: left;
+      width: 100%;
+    }
+    .item-block:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+      margin-bottom: 1px;
+    }
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 6px;
+      width: 100%;
+    }
+    .item-name {
+      font-size: 13px;
+      font-weight: 800;
+      text-align: left;
+      flex: 1;
+      word-break: break-word;
+      line-height: 1.25;
+    }
+    .item-amount {
+      font-size: 13px;
+      font-weight: 800;
+      text-align: right;
+      white-space: nowrap;
+      margin-left: 6px;
+    }
+    .item-variant {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      text-align: left;
+      margin-top: 1.5px;
+      color: #111;
+      word-break: break-word;
+    }
+    .item-identifier {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      text-align: left;
+      margin-top: 1px;
+      color: #000;
+      word-break: break-all;
+    }
+    .item-calc-row,
+    .item-disc-row,
+    .item-subrow {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #000;
+      margin-top: 1.5px;
+      width: 100%;
+    }
+    .item-calc-qty,
+    .item-calc {
+      text-align: left;
+    }
+    .item-disc-label {
+      text-align: right;
+    }
+    .item-calc-total,
+    .item-disc-val,
+    .item-disc {
+      text-align: right;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+    /* Totals */
+    .totals-container {
+      font-size: 13px;
+      font-weight: 700;
+      margin: 2px 0;
+      line-height: 1.35;
+      width: 100%;
+    }
+    .total-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      margin: 1.5px 0;
+    }
+    .total-label {
+      text-align: left;
+    }
+    .total-val {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .grand-total {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      font-size: 16.5px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      padding: 3px 0;
+      margin: 1.5px 0;
+    }
+    /* Footer */
+    .footer-section {
+      margin-top: 5px;
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 1.35;
+      text-align: center;
+    }
+    .footer-line {
+      margin: 2px 0;
+    }
+    .footer-brand {
+      font-size: 13.5px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin: 2px 0;
+    }
+    .footer-warranty {
+      font-weight: 800;
+      letter-spacing: 0.3px;
+    }
+    .powered-by {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      text-align: center;
+      padding: 2px 0;
+      margin: 2px 0;
+    }
+    .barcode-simulation {
+      margin: 6px auto 2px auto;
+      text-align: center;
+    }
+    .barcode-box {
+      font-family: 'Courier New', monospace;
+      font-size: 24px;
+      letter-spacing: 2px;
+      font-weight: 900;
+      line-height: 0.8;
+      user-select: none;
+    }
+    .barcode-text {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-paper">
+    <!-- Top Section with B&W High-Contrast Logo -->
+    <div class="top-section">
+      <div class="thermal-logo-wrap">
+        <img class="thermal-logo" src="${HOTLINE_CELLULAR_LOGO_DATA_URL}" alt="Hotline Cellular" />
       </div>
-
-      <div class="divider-double"></div>
-      <div class="bill-title">SALES RECEIPT / BILL</div>
-      <div class="divider-double"></div>
-
-      <div class="meta-section">
-        <div class="meta-line"><span class="meta-label">Receipt No:</span><span class="meta-val">${escapeHtml(saleNumber)}</span></div>
-        <div class="meta-line"><span class="meta-label">Date:</span><span class="meta-val">${escapeHtml(saleDate)}</span></div>
-        <div class="meta-line"><span class="meta-label">Customer:</span><span class="meta-val">${escapeHtml(custName || "-")}</span></div>
-        <div class="meta-line"><span class="meta-label">Phone:</span><span class="meta-val">${escapeHtml(custPhone || "-")}</span></div>
-        ${custEmail ? `<div class="meta-line"><span class="meta-label">Email:</span><span class="meta-val">${escapeHtml(custEmail)}</span></div>` : ""}
-      </div>
-
-      <div class="divider-solid"></div>
-      <div class="section-heading">ITEMS</div>
-      <div class="divider-solid"></div>
-
-      <div class="items-container">
-        ${itemsHtml}
-      </div>
-
-      <div class="divider-solid"></div>
-      <div class="totals-container">
-        <div class="total-line">
-          <span class="total-label">Subtotal:</span>
-          <span class="total-val">Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        </div>
-        ${discountTotal > 0 ? `
-        <div class="total-line">
-          <span class="total-label">Discount:</span>
-          <span class="total-val">Rs. - ${discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        </div>` : ""}
-        ${taxTotal > 0 ? `
-        <div class="total-line">
-          <span class="total-label">Tax:</span>
-          <span class="total-val">Rs. ${taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        </div>` : ""}
-      </div>
-
-      <div class="divider-solid"></div>
-      <div class="grand-total">
-        <span>TOTAL:</span>
-        <span>Rs. ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-      </div>
-      <div class="divider-solid"></div>
-
-      <div class="totals-container">
-        <div class="total-line">
-          <span class="total-label">Amount Paid:</span>
-          <span class="total-val">Rs. ${amountPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        </div>
-        <div class="total-line">
-          <span class="total-label">Change:</span>
-          <span class="total-val">Rs. ${changeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        </div>
-      </div>
-
-      ${isPhone ? `<div class="bill-spacer"></div>` : ""}
-
-      <div class="divider-double"></div>
-      <div class="footer-section">
-        <div class="footer-line">Thank you for shopping at</div>
-        <div class="footer-line footer-brand">Hotline Cellular</div>
-        ${hasMobile ? `
-        <div class="footer-line footer-warranty">${escapeHtml(warrantyText || "1 Year Warranty")}</div>
-        ` : ""}
-      </div>
-      <div class="divider-double"></div>
-      <div class="powered-by">
-        &copy; Powered by Lumisolutionz
-      </div>
-      <div class="divider-double"></div>
+      <div class="shop-name">HOTLINE CELLULAR</div>
+      <div class="shop-legal">${escapeHtml(shopName)}</div>
+      <div class="shop-reg">Reg No: ${escapeHtml(settings.regNo || "PV 00301591")}</div>
+      <div class="shop-info">${escapeHtml(address)}</div>
+      <div class="shop-info">Hotlines: ${escapeHtml(phone)}</div>
+      ${email ? `<div class="shop-info">Email: ${escapeHtml(email)}</div>` : ""}
     </div>
-  </body>
+
+    <div class="divider-double"></div>
+    <div class="bill-title">SALES RECEIPT / BILL</div>
+    <div class="divider-double"></div>
+
+    <div class="meta-section">
+      <div class="meta-line">
+        <span class="meta-label">Receipt No:</span>
+        <span class="meta-val">${escapeHtml(saleNumber)}</span>
+      </div>
+      <div class="meta-line">
+        <span class="meta-label">Date:</span>
+        <span class="meta-val">${escapeHtml(saleDate)}</span>
+      </div>
+      <div class="meta-line">
+        <span class="meta-label">Customer:</span>
+        <span class="meta-val">${escapeHtml(custName || "-")}</span>
+      </div>
+      <div class="meta-line">
+        <span class="meta-label">Phone:</span>
+        <span class="meta-val">${escapeHtml(custPhone || "-")}</span>
+      </div>
+      <div class="meta-line">
+        <span class="meta-label">Payment:</span>
+        <span class="meta-val">${escapeHtml(paymentMethodUpper)}</span>
+      </div>
+      ${custEmail ? `
+      <div class="meta-line">
+        <span class="meta-label">Email:</span>
+        <span class="meta-val">${escapeHtml(custEmail)}</span>
+      </div>` : ""}
+    </div>
+
+    <div class="divider-solid"></div>
+    <div class="section-heading">ITEMS</div>
+    <div class="divider-solid"></div>
+
+    <div class="items-container">
+      ${itemsHtml}
+    </div>
+
+    <div class="divider-solid"></div>
+    <div class="totals-container">
+      <div class="total-line">
+        <span class="total-label">Subtotal:</span>
+        <span class="total-val">Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+      ${discountTotal > 0 ? `
+      <div class="total-line">
+        <span class="total-label">Discount:</span>
+        <span class="total-val" style="font-weight: 800;">Rs. - ${discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>` : ""}
+      ${taxTotal > 0 ? `
+      <div class="total-line">
+        <span class="total-label">Sales Tax:</span>
+        <span class="total-val">Rs. ${taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>` : ""}
+    </div>
+
+    <div class="divider-solid"></div>
+    <div class="grand-total">
+      <span>TOTAL:</span>
+      <span>Rs. ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+    <div class="divider-solid"></div>
+
+    <div class="totals-container">
+      <div class="total-line">
+        <span class="total-label">Amount Paid (${paymentMethodTitle}):</span>
+        <span class="total-val">Rs. ${amountPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+      <div class="total-line">
+        <span class="total-label">Change / Balance:</span>
+        <span class="total-val">Rs. ${changeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+    </div>
+
+    <div class="divider-double"></div>
+    <!-- Barcode simulation -->
+    <div class="barcode-simulation">
+      <div class="barcode-box">|| | ||| | || |||| | | ||| || ||| |</div>
+      <div class="barcode-text">* ${escapeHtml(saleNumber)} *</div>
+    </div>
+
+    <div class="divider-double"></div>
+    <div class="footer-section">
+      <div class="footer-brand">HOTLINE CELLULAR</div>
+      <div class="footer-line">Thank you for shopping with us!</div>
+      ${hasMobile ? `
+      <div class="footer-line footer-warranty">${escapeHtml(warrantyText || "1 Year Official Brand Warranty")}</div>
+      ` : ""}
+      <div class="footer-line" style="font-size: 10px; margin-top: 2px;">Retain receipt for warranty validation.</div>
+    </div>
+
+    <div class="divider-double"></div>
+    <div class="powered-by">
+      &copy; Powered by Lumisolutionz
+    </div>
+    <div class="divider-double"></div>
+  </div>
+</body>
 </html>`;
 }
 
@@ -1719,10 +2021,11 @@ export function generateRepairBillHtml(
   change?: number,
 ): string {
   const settings = shopSettings || getShopSettings();
+  const branchAddr = formatBranchAddress(repair?.branch?.address || repair?.branch);
   const shopName = settings.shopName || "Hotline Cellular";
-  const address = settings.address || "No 27, Katuwana Road, Homagama";
-  const phone = settings.phone || "0777309726 / 0777476279";
-  const email = settings.email || "hotlinephoneshop@gmail.com";
+  const address = branchAddr || settings.address || "No 27, Katuwana Road, Homagama";
+  const phone = (repair?.branch?.phone ? String(repair.branch.phone).trim() : "") || settings.phone || "0777309726 / 0777476279";
+  const email = (repair?.branch?.email ? String(repair.branch.email).trim() : "") || settings.email || "hotlinephoneshop@gmail.com";
   const footerMsg = settings.footerMessage || "Thank you for choosing Hotline Cellular!";
 
   const finalTotal = totalCost !== undefined ? totalCost : Number(repair.totalCost || 0);
@@ -1754,8 +2057,9 @@ export function generateRepairBillHtml(
               <span class="item-name" title="${escapeHtml(rawName)}">${displayName}</span>
               <span class="item-amount">Rs. ${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
-            <div class="item-subrow">
-              <span class="item-calc">${qty} x Rs. ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <div class="item-calc-row">
+              <span class="item-calc-qty">${qty} x ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span class="item-calc-total">${(qty * price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
           </div>
         `;
@@ -1931,18 +2235,28 @@ export function generateRepairBillHtml(
         text-align: right;
         white-space: nowrap;
       }
+      .item-calc-row,
+      .item-disc-row,
       .item-subrow {
         display: flex;
         justify-content: space-between;
         align-items: center;
         font-size: 11px;
         font-weight: 700;
-        color: #222;
+        color: #000;
         margin-top: 1px;
         width: 100%;
       }
+      .item-calc-qty,
+      .item-disc-label,
       .item-calc {
         text-align: left;
+      }
+      .item-calc-total,
+      .item-disc-val {
+        text-align: right;
+        white-space: nowrap;
+        font-weight: 800;
       }
       .totals-container {
         font-size: 11.5px;
@@ -2217,10 +2531,15 @@ export function generateDailySalesReportHtml(
             <span class="sale-item-total">Rs. ${itemTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
           ${serialOrImei ? `<div class="sale-item-serial">S/N: ${escapeHtml(serialOrImei)}</div>` : ""}
-          <div class="sale-item-sub">
-            <span class="sale-item-calc">${qty} x Rs. ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            ${lineDisc > 0 ? `<span class="sale-item-disc">Disc: Rs. - ${lineDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` : ""}
+          <div class="item-calc-row">
+            <span class="item-calc-qty">${qty} x ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span class="item-calc-total">${(qty * unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
+          ${lineDisc > 0 ? `
+          <div class="item-disc-row">
+            <span class="item-disc-label">DISC</span>
+            <span class="item-disc-val">${lineDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>` : ""}
         </div>
       `;
     }).join("");
@@ -2431,22 +2750,29 @@ export function generateDailySalesReportHtml(
         color: #222222;
         margin-top: 1px;
       }
+      .item-calc-row,
+      .item-disc-row,
       .sale-item-sub {
         display: flex;
         justify-content: space-between;
         align-items: center;
         font-size: 10px;
         font-weight: 700;
-        color: #333333;
+        color: #000;
+        margin-top: 1px;
+        width: 100%;
       }
+      .item-calc-qty,
+      .item-disc-label,
       .sale-item-calc {
         text-align: left;
       }
+      .item-calc-total,
+      .item-disc-val,
       .sale-item-disc {
         text-align: right;
-        font-size: 9.5px;
+        white-space: nowrap;
         font-weight: 800;
-        color: #222222;
       }
       .sale-subtotal-bar {
         display: flex;

@@ -147,18 +147,18 @@ export default function Login(): JSX.Element {
                   value={branchId}
                   onChange={(e) => setBranchId(e.target.value)}
                   disabled={branchesLoading || branches.length === 0}
-                  className="w-full pl-12 pr-10 py-3 bg-white border border-sky-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all appearance-none dark:bg-slate-800 dark:text-white disabled:opacity-75"
+                  className="w-full pl-12 pr-10 py-3 bg-white border border-sky-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all appearance-none disabled:opacity-75 font-medium"
                   required
                 >
-                  {branchesLoading && <option value="" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">Loading branches...</option>}
+                  {branchesLoading && <option value="" className="bg-white text-slate-800">Loading branches...</option>}
                   {!branchesLoading && branches.length === 0 && (
-                    <option value="" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">{branchError || "No branches available"}</option>
+                    <option value="" className="bg-white text-slate-800">{branchError || "No branches available"}</option>
                   )}
                   {branches.map((b) => (
-                    <option key={b._id} value={b._id} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">{b.name}</option>
+                    <option key={b._id} value={b._id} className="bg-white text-slate-800">{b.name}</option>
                   ))}
                 </select>
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 dark:text-slate-400">
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
                   {branchesLoading ? (
                     <div className="w-4 h-4 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
                   ) : (
@@ -169,16 +169,16 @@ export default function Login(): JSX.Element {
                 </div>
               </div>
               {branchError && (
-                <p className="mt-1.5 text-xs text-red-500 dark:text-red-400">{branchError}</p>
+                <p className="mt-1.5 text-xs text-red-500">{branchError}</p>
               )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2 dark:text-slate-300">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
                 Username
               </label>
               <div className="relative">
                 <svg
-                  className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 dark:text-slate-400"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -196,17 +196,17 @@ export default function Login(): JSX.Element {
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="Enter username"
                   required
-                  className="w-full pl-12 pr-4 py-3 bg-white border border-sky-200 rounded-xl text-slate-800 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all dark:bg-slate-800 dark:text-white"
+                  className="w-full pl-12 pr-4 py-3 bg-white border border-sky-300 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all font-medium"
                 />
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2 dark:text-slate-300">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
                 Password
               </label>
               <div className="relative">
                 <svg
-                  className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 dark:text-slate-400"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -224,7 +224,7 @@ export default function Login(): JSX.Element {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter password"
                   required
-                  className="w-full pl-12 pr-4 py-3 bg-white border border-sky-200 rounded-xl text-slate-800 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all dark:bg-slate-800 dark:text-white"
+                  className="w-full pl-12 pr-4 py-3 bg-white border border-sky-300 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-all font-medium"
                 />
               </div>
             </div>

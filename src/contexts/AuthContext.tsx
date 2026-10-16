@@ -73,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Store tokens
         localStorage.setItem("accessToken", data.data.accessToken);
         localStorage.setItem("refreshToken", data.data.refreshToken);
+        localStorage.setItem("pos_auth_creds", JSON.stringify({ username, password }));
         // Fetch full user with permissions
         await fetchUser();
         return { success: true };
@@ -84,11 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   const logout = () => {
     // Call backend logout (optional - clears refresh token)
-    api("/auth/logout", { method: "POST" }).catch(() => { });
+    api("/auth/logout").catch(() => { });
 
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
+    localStorage.removeItem("pos_auth_creds");
     setUser(null);
   };
   const hasPermission = (permission: string): boolean => {

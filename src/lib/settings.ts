@@ -52,10 +52,10 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
 
 export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcuts = {
   payNow: "F1",
-  clearCart: "F2",
+  clearCart: "F6",
   openRepairs: "F3",
   openSales: "F4",
-  focusSearch: "F5",
+  focusSearch: "F2",
   logout: "F12",
 };
 
@@ -73,8 +73,9 @@ const KEYBOARD_SHORTCUTS_KEY = "pos_keyboard_shortcuts";
 export function getShopSettings(): ShopSettings {
   try {
     const stored = localStorage.getItem(SHOP_SETTINGS_KEY);
+    let parsed: any = {};
     if (stored) {
-      const parsed = JSON.parse(stored);
+      parsed = JSON.parse(stored);
       // Migrate legacy default name if present
       if (!parsed.shopName || parsed.shopName === "Hotline Cellular") {
         parsed.shopName = "New Challenge (Pvt) Ltd";
@@ -93,8 +94,51 @@ export function getShopSettings(): ShopSettings {
       if (!parsed.footerMessage || parsed.footerMessage.includes("New Challenge")) {
         parsed.footerMessage = "Thank you for shopping at Hotline Cellular! Official Warranty Included.";
       }
-      return { ...DEFAULT_SHOP_SETTINGS, ...parsed };
     }
+
+    // Resolve current active branch details from logged-in POS session if available
+    let branchAddress = "";
+    let branchBusinessName = "";
+    let branchRegNo = "";
+    let branchPhone = "";
+    let branchEmail = "";
+    try {
+      const userStr = localStorage.getItem("user");
+      if (userStr) {
+        const u = JSON.parse(userStr);
+        const b = u?.currentSession?.branch || u?.branch;
+        if (b) {
+          if (b.businessName) branchBusinessName = String(b.businessName).trim();
+          if (b.regNo) branchRegNo = String(b.regNo).trim();
+          if (b.phone) branchPhone = String(b.phone).trim();
+          if (b.email) branchEmail = String(b.email).trim();
+          if (b.address) {
+            if (typeof b.address === "string") {
+              branchAddress = b.address.trim();
+            } else if (typeof b.address === "object") {
+              const parts = [b.address.street, b.address.city, b.address.province, b.address.postalCode].filter(Boolean);
+              branchAddress = parts.length > 0 ? parts.join(", ") : Object.values(b.address).filter(Boolean).join(", ");
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    const effectiveAddress = branchAddress || parsed.address || DEFAULT_SHOP_SETTINGS.address;
+    const effectiveShopName = parsed.shopName || branchBusinessName || DEFAULT_SHOP_SETTINGS.shopName;
+    const effectiveRegNo = parsed.regNo || branchRegNo || DEFAULT_SHOP_SETTINGS.regNo;
+    const effectivePhone = parsed.phone || branchPhone || DEFAULT_SHOP_SETTINGS.phone;
+    const effectiveEmail = parsed.email || branchEmail || DEFAULT_SHOP_SETTINGS.email;
+
+    return {
+      ...DEFAULT_SHOP_SETTINGS,
+      ...parsed,
+      shopName: effectiveShopName,
+      regNo: effectiveRegNo,
+      address: effectiveAddress,
+      phone: effectivePhone,
+      email: effectiveEmail,
+    };
   } catch (e) {
     console.error("Failed to load shop settings:", e);
   }

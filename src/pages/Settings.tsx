@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { useTheme } from "../contexts/ThemeContext";
+import { api } from "../lib/api";
 import {
   ShopSettings,
   KeyboardShortcuts,
@@ -16,11 +16,37 @@ import {
   DEFAULT_KEYBOARD_SHORTCUTS,
   SHORTCUT_LABELS,
 } from "../lib/settings";
+import {
+  Settings as SettingsIcon,
+  Store,
+  Keyboard,
+  Palette,
+  Plug,
+  Rocket,
+  Save,
+  CheckCircle,
+  Circle,
+  PauseCircle,
+  ScanBarcode,
+  Search,
+  Zap,
+  AlertTriangle,
+  KeyRound,
+  RefreshCw,
+  Sun,
+  Lightbulb,
+  ArrowLeft,
+  Loader2,
+  Lock,
+  ShieldAlert,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+
 
 export default function Settings(): JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { theme, setTheme } = useTheme();
 
   const [activeTab, setActiveTab] = useState<"shop" | "shortcuts" | "appearance" | "hardware" | "updates">("shop");
   const [shopSettings, setShopSettings] = useState<ShopSettings>(
@@ -33,6 +59,13 @@ export default function Settings(): JSX.Element {
   const [recordingKey, setRecordingKey] = useState<
     keyof KeyboardShortcuts | null
   >(null);
+
+  // Super Admin Authorization for Software Updates
+  const [isUpdatesUnlocked, setIsUpdatesUnlocked] = useState<boolean>(false);
+  const [adminPassword, setAdminPassword] = useState<string>("");
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [unlocking, setUnlocking] = useState<boolean>(false);
+  const [unlockError, setUnlockError] = useState<string>("");
 
   // Auto-Updater State
   const [appVersion, setAppVersion] = useState<string>("1.1.0");
@@ -298,27 +331,63 @@ export default function Settings(): JSX.Element {
   };
 
   const handleSaveGithubToken = async () => {
+    localStorage.setItem("pos_github_update_token", githubToken.trim());
     if (window.ipcRenderer) {
-      await window.ipcRenderer.invoke("save_update_token", githubToken);
+      await window.ipcRenderer.invoke("save_update_token", githubToken.trim());
+      setTokenSaved(true);
+      setTimeout(() => setTokenSaved(false), 2500);
+    } else {
       setTokenSaved(true);
       setTimeout(() => setTokenSaved(false), 2500);
     }
   };
 
+  const handleUnlockUpdates = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminPassword.trim()) {
+      setUnlockError("Please enter the Super Admin password.");
+      return;
+    }
+    setUnlocking(true);
+    setUnlockError("");
+
+    try {
+      const res = await api<{ status: string; message?: string; data?: { verified: boolean } }>(
+        "/auth/verify-superadmin",
+        {
+          method: "POST",
+          body: JSON.stringify({ password: adminPassword.trim() }),
+        }
+      );
+      if (res?.status === "success" || res?.data?.verified) {
+        setIsUpdatesUnlocked(true);
+        setAdminPassword("");
+        setUnlockError("");
+      } else {
+        setUnlockError(res?.message || "Invalid Super Admin password.");
+      }
+    } catch (err: any) {
+      console.error("Super Admin verification error:", err);
+      setUnlockError(err?.message || "Failed to verify Super Admin password. Please check credentials.");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-blue-50 to-white dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+    <div className="h-screen w-screen overflow-y-auto overflow-x-hidden flex flex-col bg-gradient-to-br from-sky-50 via-blue-50 to-white dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 scrollbar-thin">
       {/* Header */}
-      <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-sky-200/50 dark:border-slate-700 px-6 py-4 flex items-center justify-between shadow-lg shadow-sky-100/20 dark:shadow-none">
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-sky-200/50 dark:border-slate-700 px-6 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate("/pos")}
-            className="p-2 bg-sky-100 hover:bg-sky-200 rounded-lg text-sky-700 hover:text-sky-800 transition-all"
+            className="flex items-center gap-1.5 p-2 bg-sky-100 hover:bg-sky-200 rounded-lg text-sky-700 hover:text-sky-800 transition-all text-sm font-medium"
           >
-            ← Back
+            <ArrowLeft className="w-4 h-4" /> Back
           </button>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 via-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
-              <span className="text-white text-lg">⚙️</span>
+              <SettingsIcon className="w-5 h-5 text-white" />
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-800 dark:text-white">POS Settings</h1>
@@ -330,87 +399,115 @@ export default function Settings(): JSX.Element {
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500 dark:text-slate-400">Logged in as</p>
-          <p className="text-slate-800 dark:text-white">{user?.username || "User"}</p>
+          <p className="text-slate-800 dark:text-white font-medium">{user?.username || "User"}</p>
         </div>
       </header>
 
       {/* Content */}
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-5xl w-full mx-auto p-6 pb-24 flex-1">
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 scrollbar-hidden">
+        <div className="flex flex-wrap items-center gap-2 mb-6 p-1.5 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
           <button
             onClick={() => setActiveTab("shop")}
-            className={`px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+            className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "shop"
-                ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg shadow-sky-500/25"
-                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700"
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-blue-700 border border-slate-200/60 dark:border-slate-700"
             }`}
           >
-            🏪 Shop Details
+            <Store className="w-4 h-4" /> Shop Details
           </button>
           <button
             onClick={() => setActiveTab("shortcuts")}
-            className={`px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+            className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "shortcuts"
-                ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg shadow-sky-500/25"
-                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700"
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-blue-700 border border-slate-200/60 dark:border-slate-700"
             }`}
           >
-            ⌨️ Keyboard Shortcuts
+            <Keyboard className="w-4 h-4" /> Shortcuts
           </button>
           <button
             onClick={() => setActiveTab("appearance")}
-            className={`px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+            className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "appearance"
-                ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg shadow-sky-500/25"
-                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700"
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-blue-700 border border-slate-200/60 dark:border-slate-700"
             }`}
           >
-            🎨 Appearance
+            <Palette className="w-4 h-4" /> Appearance
           </button>
           <button
             onClick={() => setActiveTab("hardware")}
-            className={`px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+            className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "hardware"
-                ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg shadow-sky-500/25"
-                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700"
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-blue-700 border border-slate-200/60 dark:border-slate-700"
             }`}
           >
-            🔌 Hardware
+            <Plug className="w-4 h-4" /> Hardware
           </button>
           <button
             onClick={() => setActiveTab("updates")}
-            className={`px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+            className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "updates"
-                ? "bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg shadow-sky-500/25"
-                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700"
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-blue-700 border border-slate-200/60 dark:border-slate-700"
             }`}
           >
-            🚀 Software Updates
+            <Rocket className="w-4 h-4" /> Software Updates
+            {!isUpdatesUnlocked && <Lock className="w-3.5 h-3.5 text-slate-400" />}
           </button>
         </div>
 
         {/* Success Toast */}
         {saved && (
-          <div className="fixed top-4 right-4 bg-sky-500 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-pulse z-50">
-            ✅ Settings saved!
+          <div className="fixed top-4 right-4 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 z-50 font-semibold text-sm">
+            <CheckCircle className="w-4 h-4" /> Settings saved!
           </div>
         )}
 
         {/* Shop Details Tab */}
         {activeTab === "shop" && (
-          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-              🏪 Shop Information
-              <span className="text-sm font-normal text-slate-400">
-                (Appears on receipts)
+          <div className="bg-white rounded-2xl p-6 border border-sky-100 shadow-sm">
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <Store className="w-5 h-5 text-blue-600" /> Shop Information
+              <span className="text-sm font-normal text-slate-500">
+                (Appears on receipts & thermal bills)
               </span>
             </h2>
+
+            {/* Active Branch Session Info */}
+            {user?.currentSession?.branch && (
+              <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/70 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+                    {user.currentSession.branch.code || "POS"}
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-2">
+                      Active POS Branch
+                      {user.currentSession.branch.isMainBranch && (
+                        <span className="px-2 py-0.5 bg-blue-600 text-white rounded-full text-[10px] font-bold">
+                          Main Branch
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm font-bold text-slate-800">
+                      {user.currentSession.branch.name || "Default Branch"}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-blue-700 bg-white/90 px-3 py-1.5 rounded-xl border border-blue-100 font-medium">
+                  Receipts & thermal bills automatically use this branch's address
+                </div>
+              </div>
+            )}
 
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-slate-400 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Shop / Business Name *
                   </label>
                   <input
@@ -422,12 +519,12 @@ export default function Settings(): JSX.Element {
                         shopName: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm transition-all outline-none"
                     placeholder="Enter shop name"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-400 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Company Registration No (PV / Business Reg)
                   </label>
                   <input
@@ -439,14 +536,14 @@ export default function Settings(): JSX.Element {
                         regNo: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm transition-all outline-none"
                     placeholder="e.g. PV 00301591"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-slate-400 mb-2">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                   Address
                 </label>
                 <textarea
@@ -457,15 +554,15 @@ export default function Settings(): JSX.Element {
                       address: e.target.value,
                     })
                   }
-                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm transition-all outline-none"
                   placeholder="Enter shop address"
                   rows={2}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-slate-400 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Phone
                   </label>
                   <input
@@ -477,12 +574,12 @@ export default function Settings(): JSX.Element {
                         phone: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm transition-all outline-none"
                     placeholder="Phone number"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-400 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Email
                   </label>
                   <input
@@ -494,14 +591,14 @@ export default function Settings(): JSX.Element {
                         email: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm transition-all outline-none"
                     placeholder="Email address"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-slate-400 mb-2">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                   Receipt Footer Message
                 </label>
                 <input
@@ -513,15 +610,15 @@ export default function Settings(): JSX.Element {
                       footerMessage: e.target.value,
                     })
                   }
-                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm transition-all outline-none"
                   placeholder="Thank you message"
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 bg-slate-700/50 border border-slate-600 rounded-xl">
-                <div>
-                  <div className="font-medium text-white text-sm">Pre-printed Invoice Stationery (A4)</div>
-                  <div className="text-xs text-slate-400 mt-0.5">
+              <div className="flex items-center justify-between p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="pr-4">
+                  <div className="font-bold text-slate-800 text-sm">Pre-printed Invoice Stationery (A4)</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
                     When enabled, invoices print only dynamic content (Bill To, Invoice Details, Items Table, and Totals) with 55mm top & 45mm bottom margins for pre-printed letterhead paper.
                   </div>
                 </div>
@@ -533,8 +630,8 @@ export default function Settings(): JSX.Element {
                       usePreprintedPaper: !(shopSettings.usePreprintedPaper ?? true),
                     })
                   }
-                  className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-200 ${
-                    (shopSettings.usePreprintedPaper ?? true) ? "bg-cyan-500" : "bg-slate-600"
+                  className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-200 shrink-0 ${
+                    (shopSettings.usePreprintedPaper ?? true) ? "bg-blue-600 shadow-xs shadow-blue-500/25" : "bg-slate-300"
                   }`}
                 >
                   <div
@@ -546,11 +643,11 @@ export default function Settings(): JSX.Element {
               </div>
 
               {/* Preview */}
-              <div className="mt-6 p-4 bg-slate-900 rounded-xl border border-slate-700">
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">
+              <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2.5">
                   Receipt Preview
                 </p>
-                <pre className="text-slate-300 font-mono text-sm whitespace-pre-wrap">
+                <pre className="text-slate-800 font-mono text-xs whitespace-pre-wrap bg-white p-4 rounded-xl border border-slate-200 shadow-2xs leading-relaxed">
                   {shopSettings.shopName || "[Shop Name]"}
                   {shopSettings.regNo && `\nReg No: ${shopSettings.regNo}`}
                   {shopSettings.address && `\n${shopSettings.address}`}
@@ -565,9 +662,9 @@ export default function Settings(): JSX.Element {
 
               <button
                 onClick={handleSaveShop}
-                className="w-full py-4 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-bold rounded-xl hover:from-cyan-600 hover:to-purple-600 transition-all mt-4"
+                className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all mt-4 cursor-pointer text-sm flex items-center justify-center gap-2"
               >
-                💾 Save Shop Settings
+                <Save className="w-4 h-4" /> Save Shop Settings
               </button>
             </div>
           </div>
@@ -575,20 +672,20 @@ export default function Settings(): JSX.Element {
 
         {/* Keyboard Shortcuts Tab */}
         {activeTab === "shortcuts" && (
-          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                ⌨️ Keyboard Shortcuts
+          <div className="bg-white rounded-2xl p-6 border border-sky-100 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Keyboard className="w-5 h-5 text-blue-600" /> Keyboard Shortcuts
               </h2>
               <button
                 onClick={handleResetShortcuts}
-                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-all"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold border border-slate-200 rounded-xl text-xs transition-all cursor-pointer"
               >
                 Reset to Defaults
               </button>
             </div>
 
-            <p className="text-slate-400 text-sm mb-6">
+            <p className="text-slate-500 text-xs mb-6">
               Click on a key box and press any key to set a new shortcut.
               Function keys (F1-F12) are recommended.
             </p>
@@ -598,20 +695,20 @@ export default function Settings(): JSX.Element {
                 (key) => (
                   <div
                     key={key}
-                    className="flex items-center justify-between p-4 bg-slate-700/50 rounded-xl hover:bg-slate-700 transition-all"
+                    className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200/80 rounded-xl transition-all"
                   >
                     <div>
-                      <p className="text-white font-medium">
+                      <p className="text-slate-800 font-bold text-sm">
                         {SHORTCUT_LABELS[key]}
                       </p>
-                      <p className="text-slate-500 text-sm">{key}</p>
+                      <p className="text-slate-400 font-mono text-xs mt-0.5">{key}</p>
                     </div>
                     <button
                       onClick={() => setRecordingKey(key)}
-                      className={`min-w-[80px] px-4 py-2 rounded-lg font-mono text-lg transition-all ${
+                      className={`min-w-[70px] px-3.5 py-1.5 rounded-lg font-mono font-bold text-base transition-all cursor-pointer ${
                         recordingKey === key
-                          ? "bg-cyan-500 text-white animate-pulse"
-                          : "bg-slate-600 text-white hover:bg-slate-500"
+                          ? "bg-blue-600 text-white animate-pulse shadow-md border-2 border-blue-500"
+                          : "bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-300 shadow-xs"
                       }`}
                     >
                       {recordingKey === key ? "Press..." : shortcuts[key]}
@@ -623,19 +720,18 @@ export default function Settings(): JSX.Element {
 
             <button
               onClick={handleSaveShortcuts}
-              className="w-full py-4 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-bold rounded-xl hover:from-cyan-600 hover:to-purple-600 transition-all mt-6"
+              className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all mt-6 cursor-pointer text-sm flex items-center justify-center gap-2"
             >
-              💾 Save Keyboard Shortcuts
+              <Save className="w-4 h-4" /> Save Keyboard Shortcuts
             </button>
 
             {/* Tips */}
-            <div className="mt-6 p-4 bg-slate-900/50 dark:bg-slate-950/50 rounded-xl border border-slate-700">
-              <p className="text-slate-400 text-sm">
-                <strong className="text-slate-300">💡 Tips:</strong>
-                <br />• Use F1-F12 keys for shortcuts as they don't conflict
-                with typing
-                <br />• Shortcuts work when focus is not on an input field
-                <br />• Press ESC to cancel recording a new key
+            <div className="mt-6 p-4 bg-sky-50/70 rounded-xl border border-sky-200/80">
+              <p className="text-slate-700 text-xs leading-relaxed flex flex-col gap-1">
+                <strong className="text-sky-900 font-bold flex items-center gap-1"><Lightbulb className="w-3.5 h-3.5" /> Tips:</strong>
+                <span>• Use F1-F12 keys for shortcuts as they don't conflict with typing</span>
+                <span>• Shortcuts work when focus is not on an input field</span>
+                <span>• Press ESC to cancel recording a new key</span>
               </p>
             </div>
           </div>
@@ -643,39 +739,35 @@ export default function Settings(): JSX.Element {
 
         {/* Appearance Tab */}
         {activeTab === "appearance" && (
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-sky-100 dark:border-slate-700 shadow-sm">
-            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
-              🎨 Theme Preferences
+          <div className="bg-white rounded-2xl p-6 border border-sky-100 shadow-sm">
+            <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+              <Palette className="w-5 h-5 text-blue-600" /> Theme Preferences
             </h2>
 
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-4">
-                  Select Theme
+                <label className="block text-sm font-semibold text-slate-700 mb-4">
+                  Active Theme
                 </label>
-                <div className="grid grid-cols-2 gap-4 max-w-md">
-                  <button
-                    onClick={() => setTheme('light')}
-                    className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 transition-all ${
-                      theme === 'light' 
-                        ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20' 
-                        : 'border-slate-200 dark:border-slate-700 hover:border-sky-300 dark:hover:border-slate-600'
-                    }`}
+                <div className="max-w-md">
+                  <div
+                    className="flex items-center gap-4 p-5 rounded-2xl border-2 border-sky-500 bg-sky-50/60 shadow-xs"
                   >
-                    <span className="text-4xl">☀️</span>
-                    <span className="font-medium text-slate-800 dark:text-white">Light Mode</span>
-                  </button>
-                  <button
-                    onClick={() => setTheme('dark')}
-                    className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 transition-all ${
-                      theme === 'dark' 
-                        ? 'border-sky-500 bg-slate-900/50 dark:bg-slate-950/50' 
-                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-slate-800 text-white'
-                    }`}
-                  >
-                    <span className="text-4xl">🌙</span>
-                    <span className="font-medium text-slate-800 dark:text-white">Dark Mode</span>
-                  </button>
+                    <div className="w-14 h-14 rounded-xl bg-white border border-sky-200 flex items-center justify-center shadow-xs shrink-0">
+                      <Sun className="w-7 h-7 text-amber-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 text-base">Light Mode</span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          Active Default
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        High-contrast light theme active for optimal retail clarity and cashier workflow.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -688,7 +780,7 @@ export default function Settings(): JSX.Element {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                  🔌 External Hardware & Barcode Scanners
+                  <Plug className="w-5 h-5 text-blue-600" /> External Hardware & Barcode Scanners
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                   Manage connected barcode scanners, configure their status, and pause or resume scanning.
@@ -711,7 +803,9 @@ export default function Settings(): JSX.Element {
                       ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700" 
                       : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700"
                   }`}>
-                    {shopSettings.barcodeEnabled ? "🟢" : "⏸️"}
+                    {shopSettings.barcodeEnabled 
+                      ? <Circle className="w-5 h-5 fill-emerald-500 text-emerald-500" />
+                      : <PauseCircle className="w-5 h-5" />}
                   </div>
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -785,12 +879,12 @@ export default function Settings(): JSX.Element {
                 >
                   {detecting ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+                      <Loader2 className="w-4 h-4 animate-spin" />
                       <span>Detecting...</span>
                     </>
                   ) : (
                     <>
-                      <span>🔍</span>
+                      <Search className="w-4 h-4" />
                       <span>Detect Scanner</span>
                     </>
                   )}
@@ -800,16 +894,18 @@ export default function Settings(): JSX.Element {
               {/* Device Cards List */}
               {scannerDevices.length === 0 ? (
                 <div className="p-8 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center">
-                  <div className="text-4xl mb-2">📟</div>
+                  <div className="w-12 h-12 mx-auto mb-2 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
+                    <ScanBarcode className="w-6 h-6 text-slate-400" />
+                  </div>
                   <p className="text-slate-700 dark:text-slate-300 font-semibold">No Barcode Scanner Devices Detected</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-4">
                     Connect your USB or Bluetooth barcode reader and click "Detect Scanner" to pair it.
                   </p>
                   <button
                     onClick={requestHidDevice}
-                    className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-sky-500/20"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-sky-500/20"
                   >
-                    🔍 Detect Scanner Now
+                    <Search className="w-3.5 h-3.5" /> Detect Scanner Now
                   </button>
                 </div>
               ) : (
@@ -833,7 +929,7 @@ export default function Settings(): JSX.Element {
                               ? "bg-sky-50 dark:bg-sky-950/60 border-sky-200 dark:border-sky-800 text-sky-600"
                               : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400"
                           }`}>
-                            📟
+                            <ScanBarcode className="w-5 h-5" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
@@ -904,7 +1000,7 @@ export default function Settings(): JSX.Element {
             <div className="p-4 rounded-2xl border border-sky-200/80 dark:border-slate-700 bg-sky-50/40 dark:bg-slate-900/60">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-base">⚡</span>
+                  <Zap className="w-4 h-4 text-sky-500" />
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                     Live Scanner Hardware Test
                   </h4>
@@ -945,50 +1041,139 @@ export default function Settings(): JSX.Element {
           </div>
         )}
 
-        {/* Software Updates Tab */}
-        {activeTab === "updates" && (
-          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 space-y-6">
-            <div className="flex items-start justify-between">
+        {/* Software Updates Tab - Permission Required Lock Screen */}
+        {activeTab === "updates" && !isUpdatesUnlocked && (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200/80 dark:border-slate-700 shadow-sm max-w-md mx-auto text-center space-y-6">
+            <div className="w-16 h-16 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200/80 dark:border-amber-500/20 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400 shadow-sm">
+              <ShieldAlert className="w-8 h-8" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-800 dark:text-white">Permission Required</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                Software updates and GitHub PAT tokens require Super Admin authorization. Please enter the Super Admin account password to unlock.
+              </p>
+            </div>
+
+            <form onSubmit={handleUnlockUpdates} className="space-y-4 text-left">
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  🚀 System Updates
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                  Super Admin Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter super admin password"
+                    value={adminPassword}
+                    onChange={(e) => {
+                      setAdminPassword(e.target.value);
+                      setUnlockError("");
+                    }}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-800 dark:text-white placeholder-slate-400 focus:bg-white dark:focus:bg-slate-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm outline-none pr-10"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {unlockError && (
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{unlockError}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("shop")}
+                  className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={unlocking || !adminPassword.trim()}
+                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-md shadow-blue-500/25 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {unlocking ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Verifying...
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" /> Unlock Updates
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Software Updates Tab - Unlocked View (Light Theme) */}
+        {activeTab === "updates" && isUpdatesUnlocked && (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200/80 dark:border-slate-700 space-y-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                  <Rocket className="w-5 h-5 text-blue-600" /> System Updates
                 </h2>
-                <p className="text-sm text-slate-400 mt-1">
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                   Manage POS client application version and automatic updates
                 </p>
               </div>
-              <span className="px-3 py-1 bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-xl font-mono text-xs font-bold">
-                Installed: v{appVersion}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1.5 bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-500/30 rounded-xl font-mono text-xs font-bold">
+                  Installed: v{appVersion}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUpdatesUnlocked(false);
+                    setAdminPassword("");
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                  title="Lock Updates tab"
+                >
+                  <Lock className="w-3.5 h-3.5" /> Lock
+                </button>
+              </div>
             </div>
 
             {/* Release Channel Info Card */}
-            <div className="bg-slate-900/60 rounded-xl p-4 border border-slate-700/80 space-y-3">
+            <div className="bg-slate-50 dark:bg-slate-900/60 rounded-xl p-4 border border-slate-200/80 dark:border-slate-700/80 space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Release Repository</span>
-                <span className="font-mono text-slate-200 font-semibold">
+                <span className="text-slate-500 dark:text-slate-400">Release Repository</span>
+                <span className="font-mono text-slate-800 dark:text-slate-200 font-semibold">
                   github.com/lumisolutionz-code/Hotline-POS-
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Target Channel</span>
-                <span className="text-emerald-400 font-semibold">Stable Production</span>
+                <span className="text-slate-500 dark:text-slate-400">Target Channel</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Stable Production</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Auto-Update Mode</span>
-                <span className="text-slate-200 font-semibold">Automatic Silent Download</span>
+                <span className="text-slate-500 dark:text-slate-400">Auto-Update Mode</span>
+                <span className="text-slate-800 dark:text-slate-200 font-semibold">Automatic Silent Download</span>
               </div>
             </div>
 
             {/* Private Repo Warning Notice */}
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-xs text-amber-200/90 leading-relaxed space-y-2">
-              <div className="font-bold flex items-center gap-1.5 text-amber-300">
-                <span>⚠️</span> Why updates fail if your GitHub repository is Private:
+            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl p-4 text-xs text-amber-900 dark:text-amber-200/90 leading-relaxed space-y-2">
+              <div className="font-bold flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="w-4 h-4" /> Why updates fail if your GitHub repository is Private:
               </div>
               <p>
                 GitHub automatically blocks unauthenticated requests to <strong>Private</strong> repositories with a <code>404 Not Found</code> error. For cashiers and POS stations to detect and download updates seamlessly:
               </p>
-              <ul className="list-disc list-inside space-y-1 text-slate-300 pl-1">
+              <ul className="list-disc list-inside space-y-1 text-slate-700 dark:text-slate-300 pl-1">
                 <li><strong>Recommended:</strong> Make your GitHub repository (<code>lumisolutionz-code/Hotline-POS-</code>) <strong>Public</strong> in GitHub repository Settings → Danger Zone → Change Visibility to Public.</li>
                 <li><strong>Or:</strong> Provide a GitHub Personal Access Token (PAT) below with <code>repo</code> or <code>Contents: read-only</code> permissions.</li>
                 <li>Ensure all 3 release files are attached to the release: <code>.exe</code>, <code>latest.yml</code>, and <code>.blockmap</code>.</li>
@@ -996,19 +1181,19 @@ export default function Settings(): JSX.Element {
             </div>
 
             {/* GitHub Personal Access Token Configuration (For Private Repositories) */}
-            <div className="bg-slate-900/60 rounded-xl p-4 border border-slate-700/80 space-y-3">
+            <div className="bg-slate-50 dark:bg-slate-900/60 rounded-xl p-4 border border-slate-200/80 dark:border-slate-700/80 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    🔑 GitHub Personal Access Token (PAT)
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-blue-600" /> GitHub Personal Access Token (PAT)
                   </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     Required only if your repository is Private. Leave blank if your repository is Public.
                   </p>
                 </div>
                 {tokenSaved && (
-                  <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-medium animate-in fade-in">
-                    ✓ Token Saved
+                  <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg font-medium animate-in fade-in flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Token Saved
                   </span>
                 )}
               </div>
@@ -1019,11 +1204,11 @@ export default function Settings(): JSX.Element {
                   placeholder="ghp_xxxxxxxxxxxxxxxxxxxx (GitHub Read-Only Token)"
                   value={githubToken}
                   onChange={(e) => setGithubToken(e.target.value)}
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 font-mono"
+                  className="flex-1 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono"
                 />
                 <button
                   onClick={handleSaveGithubToken}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
                 >
                   Save Token
                 </button>
@@ -1031,13 +1216,14 @@ export default function Settings(): JSX.Element {
                   <button
                     onClick={async () => {
                       setGithubToken("");
+                      localStorage.removeItem("pos_github_update_token");
                       if (window.ipcRenderer) {
                         await window.ipcRenderer.invoke("save_update_token", "");
                         setTokenSaved(true);
                         setTimeout(() => setTokenSaved(false), 2000);
                       }
                     }}
-                    className="px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-300 text-xs rounded-xl border border-red-700/50 transition-colors cursor-pointer"
+                    className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-xl border border-red-200 transition-colors cursor-pointer"
                     title="Clear Token"
                   >
                     Clear
@@ -1085,7 +1271,7 @@ export default function Settings(): JSX.Element {
                           ? "GitHub Returned 404 (Private Repository)"
                           : "Update Check Failed",
                         detail: res?.is404
-                          ? "GitHub returned 404 Not Found because the repository is set to Private. Set the repository visibility to Public on GitHub to allow client updates."
+                          ? "GitHub returned 404 Not Found because the repository is set to Private. Set the repository visibility to Public on GitHub to allow client updates, or provide a GitHub PAT token above."
                           : res?.error || "Could not complete update check.",
                       });
                     }
@@ -1100,7 +1286,7 @@ export default function Settings(): JSX.Element {
                   }
                 }}
                 disabled={checkingUpdate}
-                className="px-6 py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-sky-500/25 flex items-center gap-2 cursor-pointer"
+                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-blue-500/25 flex items-center gap-2 cursor-pointer"
               >
                 {checkingUpdate ? (
                   <>
@@ -1109,7 +1295,7 @@ export default function Settings(): JSX.Element {
                   </>
                 ) : (
                   <>
-                    <span>🔄</span> Check for Updates Now
+                    <RefreshCw className="w-4 h-4" /> Check for Updates Now
                   </>
                 )}
               </button>
@@ -1120,17 +1306,17 @@ export default function Settings(): JSX.Element {
               <div
                 className={`p-4 rounded-xl border text-xs leading-relaxed space-y-1 ${
                   updateStatus.type === "error"
-                    ? "bg-red-500/10 border-red-500/30 text-red-300"
+                    ? "bg-red-50 border-red-200 text-red-800"
                     : updateStatus.type === "latest"
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
                     : updateStatus.type === "available"
-                    ? "bg-blue-500/10 border-blue-500/30 text-blue-300"
-                    : "bg-slate-700/50 border-slate-600 text-slate-300"
+                    ? "bg-blue-50 border-blue-200 text-blue-800"
+                    : "bg-slate-100 border-slate-200 text-slate-700"
                 }`}
               >
                 <div className="font-bold text-sm">{updateStatus.message}</div>
                 {updateStatus.detail && (
-                  <div className="text-slate-300 mt-1">{updateStatus.detail}</div>
+                  <div className="mt-1">{updateStatus.detail}</div>
                 )}
               </div>
             )}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Store, X } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../contexts/AuthContext";
 
@@ -43,7 +44,7 @@ export function BranchSelectorModal({ onClose }: { onClose: () => void }) {
         <div className="px-6 py-4 bg-[#0f172a] text-white border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-extrabold shadow-md shrink-0">
-              🏪
+              <Store className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -64,7 +65,7 @@ export function BranchSelectorModal({ onClose }: { onClose: () => void }) {
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
             title="Close"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            <X className="w-5 h-5" />
           </button>
         </div>
         <div className="p-5 overflow-y-auto">
