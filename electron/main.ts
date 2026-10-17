@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -24,7 +24,8 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
-let win: BrowserWindow | null
+let win: BrowserWindow | null = null
+let activePrintWindow: BrowserWindow | null = null
 
 // Configure autoUpdater
 autoUpdater.autoDownload = true
@@ -89,13 +90,30 @@ function createWindow() {
 
   win.maximize()
 
-  // Open external links in user's default browser
+  // Open external links in user's default browser and configure child print windows
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http:') || url.startsWith('https:')) {
       shell.openExternal(url)
       return { action: 'deny' }
     }
-    return { action: 'allow' }
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        webPreferences: {
+          preload: path.join(__dirname, 'preload.mjs'),
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      },
+    }
+  })
+
+  // Track child print windows opened from this window
+  win.webContents.on('did-create-window', (childWin) => {
+    activePrintWindow = childWin
+    childWin.on('closed', () => {
+      if (activePrintWindow === childWin) activePrintWindow = null
+    })
   })
 
   // Test active push message to Renderer-process.
@@ -230,5 +248,240 @@ ipcMain.handle('open_external', async (_, url: string) => {
     return true
   }
   return false
+})
+
+// Trigger native OS print dialog for the requesting or child report window
+const handleNativePrint = async (event: any, options?: { silent?: boolean }) => {
+  // 1. If child print window is active, prioritize printing it
+  let targetWin = (activePrintWindow && !activePrintWindow.isDestroyed())
+    ? activePrintWindow
+    : BrowserWindow.fromWebContents(event.sender)
+
+  // 2. Fallback to focused window or main window
+  if (!targetWin || targetWin.isDestroyed()) {
+    targetWin = BrowserWindow.getFocusedWindow() || win
+  }
+
+  if (!targetWin || targetWin.isDestroyed()) return false
+
+  targetWin.focus()
+  return new Promise((resolve) => {
+    targetWin!.webContents.print(
+      {
+        silent: options?.silent ?? false,
+        printBackground: true,
+      },
+      (success, failureReason) => {
+        if (!success) console.warn('[Electron Print Error]:', failureReason)
+        resolve(success)
+      }
+    )
+  })
+}
+
+ipcMain.handle('print_document', handleNativePrint)
+ipcMain.handle('print_active_report', handleNativePrint)
+
+// Direct HTML print
+ipcMain.handle('print_html_direct', async (_event, { html, title }: { html: string; title?: string }) => {
+  const printWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+    },
+  })
+  if (title) printWin.setTitle(title)
+  await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  return new Promise((resolve) => {
+    printWin.webContents.print(
+      {
+        silent: false,
+        printBackground: true,
+      },
+      (success, failureReason) => {
+        printWin.close()
+        if (!success) console.warn('[Direct Print Error]:', failureReason)
+        resolve(success)
+      }
+    )
+  })
+})
+
+// Render HTML report to PDF and trigger save file dialog
+ipcMain.handle('download_pdf', async (_event, { html, defaultName }: { html: string; defaultName?: string }) => {
+  try {
+    const pdfWin = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+      },
+    })
+    await pdfWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    const data = await pdfWin.webContents.printToPDF({
+      pageSize: 'A4',
+      printBackground: true,
+      margins: {
+        top: 0.35,
+        bottom: 0.35,
+        left: 0.4,
+        right: 0.4,
+      },
+    })
+    pdfWin.close()
+
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: 'Download Business Report as PDF',
+      defaultPath: defaultName || `Business-Report-${new Date().toISOString().slice(0, 10)}.pdf`,
+      filters: [{ name: 'PDF Document (*.pdf)', extensions: ['pdf'] }],
+    })
+
+    if (!canceled && filePath) {
+      fs.writeFileSync(filePath, data)
+      return { success: true, filePath }
+    }
+    return { success: false, canceled: true }
+  } catch (err: any) {
+    console.error('[Download PDF Error]:', err)
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+// ==========================================
+// Database Backup IPC Handlers
+// ==========================================
+function getBackupConfigFile(): string {
+  return path.join(app.getPath('userData'), 'backup-config.json')
+}
+
+function getDefaultBackupDir(): string {
+  const dir = path.join(app.getPath('documents'), 'Hotline_POS_Backups')
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  } catch (e) {
+    console.error('[Backup] Failed to ensure default backup directory:', e)
+  }
+  return dir
+}
+
+function getStoredBackupDir(): string {
+  try {
+    const file = getBackupConfigFile()
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'))
+      if (parsed?.destinationPath && fs.existsSync(parsed.destinationPath)) {
+        return parsed.destinationPath
+      }
+    }
+  } catch (e) {
+    console.warn('[Backup] Failed reading backup config:', e)
+  }
+  return getDefaultBackupDir()
+}
+
+ipcMain.handle('get_backup_config', async () => {
+  return { destinationPath: getStoredBackupDir() }
+})
+
+ipcMain.handle('save_backup_config', async (_event, { destinationPath }: { destinationPath: string }) => {
+  try {
+    const file = getBackupConfigFile()
+    if (!fs.existsSync(destinationPath)) {
+      fs.mkdirSync(destinationPath, { recursive: true })
+    }
+    fs.writeFileSync(file, JSON.stringify({ destinationPath: destinationPath.trim() }), 'utf-8')
+    return { success: true, destinationPath: destinationPath.trim() }
+  } catch (e: any) {
+    console.error('[Backup] Failed saving backup config:', e)
+    return { success: false, error: e?.message || String(e) }
+  }
+})
+
+ipcMain.handle('select_backup_directory', async () => {
+  const currentDir = getStoredBackupDir()
+  const { filePaths, canceled } = await dialog.showOpenDialog({
+    title: 'Select Database Backup Storage Directory',
+    defaultPath: currentDir,
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (!canceled && filePaths && filePaths.length > 0) {
+    return filePaths[0]
+  }
+  return null
+})
+
+ipcMain.handle('save_backup_archive', async (_event, { buffer, filename, targetPath }: { buffer: any; filename: string; targetPath?: string }) => {
+  try {
+    const dir = targetPath || getStoredBackupDir()
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+    const safeFilename = filename || `hotline_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`
+    const fullPath = path.join(dir, safeFilename)
+
+    let writeBuffer: Buffer
+    if (Buffer.isBuffer(buffer)) {
+      writeBuffer = buffer
+    } else if (typeof buffer === 'string') {
+      writeBuffer = Buffer.from(buffer, 'base64')
+    } else {
+      writeBuffer = Buffer.from(buffer)
+    }
+
+    fs.writeFileSync(fullPath, writeBuffer)
+    const stats = fs.statSync(fullPath)
+
+    return {
+      success: true,
+      filePath: fullPath,
+      size: stats.size,
+      filename: safeFilename,
+      savedAt: new Date().toISOString(),
+    }
+  } catch (e: any) {
+    console.error('[Backup] Error saving backup archive to disk:', e)
+    return { success: false, error: e?.message || String(e) }
+  }
+})
+
+ipcMain.handle('list_backup_files', async (_event, customDir?: string) => {
+  try {
+    const dir = customDir || getStoredBackupDir()
+    if (!fs.existsSync(dir)) {
+      return { success: true, files: [], directory: dir }
+    }
+    const entries = fs.readdirSync(dir)
+    const files = entries
+      .filter((file) => file.toLowerCase().endsWith('.zip'))
+      .map((file) => {
+        try {
+          const fullPath = path.join(dir, file)
+          const stats = fs.statSync(fullPath)
+          return {
+            filename: file,
+            fullPath,
+            size: stats.size,
+            modifiedAt: stats.mtime.toISOString(),
+          }
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime())
+
+    return { success: true, files, directory: dir }
+  } catch (e: any) {
+    console.error('[Backup] Error listing backup files:', e)
+    return { success: false, error: e?.message || String(e), files: [] }
+  }
+})
+
+ipcMain.handle('open_backup_directory', async (_event, customDir?: string) => {
+  const dir = customDir || getStoredBackupDir()
+  if (fs.existsSync(dir)) {
+    shell.openPath(dir)
+    return { success: true }
+  }
+  return { success: false, error: 'Directory does not exist' }
 })
 

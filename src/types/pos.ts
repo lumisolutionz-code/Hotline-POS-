@@ -94,6 +94,7 @@ export interface CartItem extends Product {
   provider?: string;
   phoneNumber?: string;
   customPrice?: number | string;
+  showWarranty?: boolean;
 }
 
 export interface RepairJob {
@@ -198,6 +199,7 @@ export interface PaymentModalProps {
   onClose: () => void;
   onSuccess: () => void;
   exchangePayload?: any;
+  orderDiscount?: number;
 }
 
 export interface SalesPanelProps {

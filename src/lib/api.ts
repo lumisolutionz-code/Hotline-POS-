@@ -172,3 +172,51 @@ export const apiPut = <T>(endpoint: string, body: unknown) =>
   });
 export const apiDelete = <T>(endpoint: string) =>
   api<T>(endpoint, { method: "DELETE" });
+
+export { API_URL };
+
+/**
+ * Download Database Backup ZIP with safe timeout and offline resilience
+ */
+export async function downloadBackupArchive(
+  trigger: string = "MANUAL",
+  timeoutMs: number = 12000
+): Promise<{ buffer: ArrayBuffer; filename: string } | null> {
+  const token = localStorage.getItem("accessToken");
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${API_URL}/backups/export?trigger=${encodeURIComponent(trigger)}`, {
+      method: "GET",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      console.warn(`[Backup Download] Server returned status ${res.status}`);
+      return null;
+    }
+
+    const disposition = res.headers.get("content-disposition") || "";
+    let filename = "";
+    const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1];
+    } else {
+      const now = new Date().toISOString().replace(/[:.]/g, "-");
+      filename = `hotline_backup_${now}.zip`;
+    }
+
+    const buffer = await res.arrayBuffer();
+    return { buffer, filename };
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    console.warn("[Backup Download] Skipped or timed out (offline/slow connection):", err?.message || err);
+    return null;
+  }
+}

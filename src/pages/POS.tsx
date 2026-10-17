@@ -4,7 +4,6 @@ import { useAuth } from "../contexts/AuthContext";
 import { PERMISSIONS } from "../constants/permission";
 import { api } from "../lib/api";
 import { getKeyboardShortcuts, getShopSettings } from "../lib/settings";
-import { generateDailySalesReportHtml, printDocument } from "../lib/invoiceGenerator";
 
 // Global in-memory cache for product variants & live stock items for instant popup opening
 const productVariantsCache = new Map<string, { data: any; timestamp: number }>();
@@ -29,12 +28,14 @@ import {
   WarrantyClaimModal,
   VariantSelectionModal,
   CustomerRequestModal,
+  ReportsModal,
   SalesPanel,
   RepairsPanel,
   ExpensesPanel,
   ReturnsPanel,
   WarrantyPanel,
   SimReloadPanel,
+  CashDrawerModal,
 } from "../components/pos";
 
 import companyIcon from "../assets/company-icon.png";
@@ -53,6 +54,7 @@ import {
   Laptop,
   Shield,
   Globe,
+  Banknote,
 } from "lucide-react";
 
 const getCategoryIcon = (name: string, className = "w-4 h-4") => {
@@ -154,6 +156,8 @@ export default function POS(): JSX.Element {
     null,
   );
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [isGoogleReviewEnabled, setIsGoogleReviewEnabled] = useState<boolean>(false);
+  const [googleReviewDiscount, setGoogleReviewDiscount] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [productPage, setProductPage] = useState<number>(1);
   const PRODUCTS_PER_PAGE = 15;
@@ -211,10 +215,64 @@ export default function POS(): JSX.Element {
   const [showVariantModal, setShowVariantModal] = useState<boolean>(false);
   const [isVariantModalLoading, setIsVariantModalLoading] = useState<boolean>(false);
   const [showCustomerRequestModal, setShowCustomerRequestModal] = useState<boolean>(false);
+  const [showReportsModal, setShowReportsModal] = useState<boolean>(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const [pendingVariantId, setPendingVariantId] = useState<string | undefined>(undefined);
   const [pendingSerialNumber, setPendingSerialNumber] = useState<string | undefined>(undefined);
   const [toastNotification, setToastNotification] = useState<{ message: string; type: "error" | "success" } | null>(null);
+
+  // Cash Drawer Session State
+  const [activeCashSession, setActiveCashSession] = useState<any | null>(null);
+  const [expectedOpeningAmount, setExpectedOpeningAmount] = useState<number>(0);
+  const [showCashDrawerModal, setShowCashDrawerModal] = useState<boolean>(false);
+  const [cashDrawerModalMode, setCashDrawerModalMode] = useState<"OPEN" | "VIEW" | "CLOSE">("OPEN");
+  const [sessionTimerDisplay, setSessionTimerDisplay] = useState<string>("00:00:00");
+  const hasAutoPromptedDrawerRef = useRef<boolean>(false);
+
+  const fetchCurrentSession = async (silent: boolean = false) => {
+    try {
+      const res = await api<any>("/cash-sessions/current");
+      if (res.status === "success" && res.data) {
+        if (res.data.hasActiveSession && res.data.session) {
+          setActiveCashSession(res.data.session);
+        } else {
+          setActiveCashSession(null);
+          setExpectedOpeningAmount(res.data.expectedOpeningAmount || 0);
+
+          // Auto-prompt popup on first login when no session is active for the day/shift
+          if (!hasAutoPromptedDrawerRef.current) {
+            hasAutoPromptedDrawerRef.current = true;
+            setCashDrawerModalMode("OPEN");
+            setShowCashDrawerModal(true);
+          }
+        }
+      }
+    } catch (err) {
+      if (!silent) console.error("Failed to check drawer session:", err);
+    }
+  };
+
+  // Live session timer in POS header
+  useEffect(() => {
+    if (!activeCashSession?.openedAt) {
+      setSessionTimerDisplay("00:00:00");
+      return;
+    }
+    const updateTimer = () => {
+      const startMs = new Date(activeCashSession.openedAt).getTime();
+      const nowMs = Date.now();
+      const diff = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+      const hrs = Math.floor(diff / 3600);
+      const mins = Math.floor((diff % 3600) / 60);
+      const secs = diff % 60;
+      setSessionTimerDisplay(
+        `${hrs.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
+      );
+    };
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [activeCashSession?.openedAt]);
 
   const showError = (msg: string) => {
     setToastNotification({ message: msg, type: "error" });
@@ -312,6 +370,9 @@ export default function POS(): JSX.Element {
     if (Array.isArray(prod.variants) && prod.variants.some((v: any) => String(v.trackingType || "").toUpperCase() === "IMEI")) {
       return true;
     }
+    if (Array.isArray(prod.stockItems) && prod.stockItems.some((s: any) => Boolean(s.imei1))) {
+      return true;
+    }
     if (rawProdTracking === "QUANTITY" || (variant && String(variant.trackingType || "").toUpperCase() === "QUANTITY")) {
       return false;
     }
@@ -321,7 +382,7 @@ export default function POS(): JSX.Element {
 
     const catName = typeof prod.category === "object" ? prod.category?.name || "" : "";
     if (/phone|cellular|smartphone|tablet/i.test(catName) && !/accessory|accessories/i.test(catName)) return true;
-    if (/(iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei)/i.test(prod.name || "")) return true;
+    if (/\b(phone|smartphone|iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei)\b/i.test(prod.name || "")) return true;
     return false;
   };
 
@@ -691,6 +752,38 @@ export default function POS(): JSX.Element {
               ? data.variants
               : (stockItem.variant ? [stockItem.variant] : []);
 
+            if (isImei) {
+              const isActualImei = Boolean(
+                (stockItem.imei1 && String(stockItem.imei1).trim().toLowerCase() === code.toLowerCase()) ||
+                (stockItem.imei2 && String(stockItem.imei2).trim().toLowerCase() === code.toLowerCase())
+              );
+
+              // If user scanned a stock batch number (like STK-...) or there are multiple variants,
+              // prompt for the physical phone IMEI via VariantSelectionModal
+              if (!isActualImei || serialVariants.length > 1) {
+                setPendingProduct({ ...targetProd, variants: serialVariants });
+                setPendingVariantId(serialVariants[0]?._id);
+                setPendingSerialNumber(code);
+                setIsVariantModalLoading(true);
+                setShowVariantModal(true);
+
+                api<any>(`/products/${targetProd._id}/with-variants`)
+                  .then((res) => {
+                    if (res && res.status === "success" && res.data) {
+                      productVariantsCache.set(targetProd._id, { data: res.data, timestamp: Date.now() });
+                      applyWithVariantsData(targetProd, res.data);
+                    }
+                  })
+                  .catch((err) => {
+                    console.error("Error fetching product variants in background:", err);
+                  })
+                  .finally(() => {
+                    setIsVariantModalLoading(false);
+                  });
+                return;
+              }
+            }
+
             if (serialVariants.length > 1) {
               setPendingProduct({ ...targetProd, variants: serialVariants });
               setPendingVariantId(serialVariants[0]?._id);
@@ -720,7 +813,21 @@ export default function POS(): JSX.Element {
             setPendingProduct(fullProd);
             setPendingVariantId(variants[0]?._id);
             setPendingSerialNumber(undefined);
+            setIsVariantModalLoading(true);
             setShowVariantModal(true);
+            api<any>(`/products/${fullProd._id}/with-variants`)
+              .then((res) => {
+                if (res && res.status === "success" && res.data) {
+                  productVariantsCache.set(fullProd._id, { data: res.data, timestamp: Date.now() });
+                  applyWithVariantsData(fullProd, res.data);
+                }
+              })
+              .catch((err) => {
+                console.error("Error fetching product variants in background:", err);
+              })
+              .finally(() => {
+                setIsVariantModalLoading(false);
+              });
             return;
           }
 
@@ -778,7 +885,21 @@ export default function POS(): JSX.Element {
       if (isImeiProduct(targetProduct, targetVariant)) {
         setPendingProduct({ ...targetProduct, variants: prodVariants });
         setPendingVariantId(targetVariant?._id || undefined);
+        setIsVariantModalLoading(true);
         setShowVariantModal(true);
+        api<any>(`/products/${targetProduct._id}/with-variants`)
+          .then((res) => {
+            if (res && res.status === "success" && res.data) {
+              productVariantsCache.set(targetProduct._id, { data: res.data, timestamp: Date.now() });
+              applyWithVariantsData(targetProduct, res.data);
+            }
+          })
+          .catch((err) => {
+            console.error("Error fetching product variants in background:", err);
+          })
+          .finally(() => {
+            setIsVariantModalLoading(false);
+          });
         return;
       }
       addToCart(
@@ -804,10 +925,12 @@ export default function POS(): JSX.Element {
     // Initial fetch: silent if we already have cached products, spinner only if completely empty
     const hasCachedData = productsRef.current.length > 0;
     fetchData(hasCachedData);
+    fetchCurrentSession(true);
 
     // Silent background sync every 60 seconds (no UI flicker or spinner)
     const interval = setInterval(() => {
       fetchData(true);
+      fetchCurrentSession(true);
     }, 60000);
 
     // Immediate background sync when POS window/tab regains focus or visibility (throttled to 15s)
@@ -861,6 +984,7 @@ export default function POS(): JSX.Element {
   useEffect(() => {
     const isAnyModalOpen =
       showPaymentModal ||
+      showCashDrawerModal ||
       showSalesPanel ||
       showRepairsPanel ||
       showExpensesPanel ||
@@ -909,6 +1033,7 @@ export default function POS(): JSX.Element {
       // Ignore if any modal/panel is open
       if (
         showPaymentModal ||
+        showCashDrawerModal ||
         showSalesPanel ||
         showRepairsPanel ||
         showExpensesPanel ||
@@ -967,6 +1092,7 @@ export default function POS(): JSX.Element {
     return () => window.removeEventListener("keydown", handleGlobalScan);
   }, [
     showPaymentModal,
+    showCashDrawerModal,
     showSalesPanel,
     showRepairsPanel,
     showExpensesPanel,
@@ -1128,64 +1254,6 @@ export default function POS(): JSX.Element {
       console.error("Failed to fetch sales:", err);
     } finally {
       setSalesLoading(false);
-    }
-  };
-
-  const [printingTodaySales, setPrintingTodaySales] = useState<boolean>(false);
-
-  // Print all sales of the current day (from 12:00 AM to current moment)
-  const handlePrintTodaySales = async () => {
-    if (printingTodaySales) return;
-    setPrintingTodaySales(true);
-    try {
-      const now = new Date();
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0); // 12:00:00.000 AM of current day
-
-      const queryStr = `/sales?startDate=${encodeURIComponent(startOfDay.toISOString())}&endDate=${encodeURIComponent(now.toISOString())}&limit=2000`;
-      const res = await api<any>(queryStr);
-
-      const salesList: any[] = res?.status === "success" && Array.isArray(res?.data?.sales)
-        ? res.data.sales
-        : [];
-
-      // Filter out cancelled / voided sales and ensure chronological order (from morning to current time)
-      const validSales = salesList
-        .filter((s) => s.status !== "CANCELLED" && s.status !== "VOIDED")
-        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-      // Include queued offline sales created today if any exist
-      try {
-        const offlineQueue = JSON.parse(localStorage.getItem("offlineSalesQueue") || "[]");
-        if (Array.isArray(offlineQueue) && offlineQueue.length > 0) {
-          offlineQueue.forEach((offSale: any) => {
-            const saleTime = new Date(offSale.createdAt || Date.now());
-            if (saleTime >= startOfDay && saleTime <= now && offSale.status !== "CANCELLED") {
-              const exists = validSales.some((s) => s.saleNumber === offSale.saleNumber || (s._id && s._id === offSale._id));
-              if (!exists) {
-                validSales.push(offSale);
-              }
-            }
-          });
-        }
-      } catch (e) {}
-
-      const formattedTime = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
-
-      if (validSales.length === 0) {
-        showError(`No sales recorded today between 12:00 AM and ${formattedTime}.`);
-        return;
-      }
-
-      showSuccess(`Preparing report for ${validSales.length} sale(s) today...`);
-      const shopSettings = getShopSettings();
-      const html = generateDailySalesReportHtml(validSales, startOfDay, now, shopSettings, user);
-      printDocument(html, `Daily-Sales-${startOfDay.toISOString().slice(0, 10)}`, "bill");
-    } catch (err: any) {
-      console.error("Failed to fetch today's sales for printing:", err);
-      showError(err?.message || "Failed to load today's sales for printing.");
-    } finally {
-      setPrintingTodaySales(false);
     }
   };
 
@@ -1743,6 +1811,7 @@ export default function POS(): JSX.Element {
           trackingType: "IMEI",
           variantDisplay: formatVariantDisplay(variant),
           stockItemId: stockItemId,
+          showWarranty: false,
         };
 
         const nextCart = [...prevCart, newItem];
@@ -1808,6 +1877,7 @@ export default function POS(): JSX.Element {
             trackingType: variant?.trackingType || product.trackingType || "QUANTITY",
             variantDisplay: formatVariantDisplay(variant),
             stockItemId: stockItemId,
+            showWarranty: false,
           };
 
           const nextCart = [...prevCart, newItem];
@@ -1930,6 +2000,8 @@ export default function POS(): JSX.Element {
     setCart([]);
     cartRef.current = [];
     setExchangePayload(null);
+    setIsGoogleReviewEnabled(false);
+    setGoogleReviewDiscount("");
   };
 
   // Calculate totals (use originalPrice and discountAmount)
@@ -1953,10 +2025,16 @@ export default function POS(): JSX.Element {
     0,
   );
 
-  const totalDiscount = cart.reduce(
+  const itemDiscountsTotal = cart.reduce(
     (sum, item) => sum + (Number(item.discountAmount ?? 0) * item.quantity),
     0,
   );
+
+  const parsedGoogleReviewDiscount = isGoogleReviewEnabled
+    ? Math.max(0, parseFloat(googleReviewDiscount) || 0)
+    : 0;
+
+  const totalDiscount = itemDiscountsTotal + parsedGoogleReviewDiscount;
 
   const netSubtotal = Math.max(0, rawSubtotal - totalDiscount);
 
@@ -1966,7 +2044,7 @@ export default function POS(): JSX.Element {
   }, 0);
 
   const subtotal = rawSubtotal;
-  const total = netSubtotal + tax;
+  const total = Math.max(0, netSubtotal + tax);
 
   const handleLogout = (): void => {
     logout();
@@ -2150,6 +2228,62 @@ export default function POS(): JSX.Element {
             );
           })}
         </nav>
+
+        {/* Sidebar Bottom - Block 1: Tools (Print & Refresh) */}
+        <div className="p-2 xl:p-2.5 border-t border-slate-800/80 shrink-0">
+          <div className="grid grid-cols-2 gap-1.5">
+            {/* Reports & Analytics Modal Button (Print) */}
+            <button
+              onClick={() => setShowReportsModal(true)}
+              className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 hover:text-white border border-slate-700/50 transition-all cursor-pointer text-xs font-semibold shadow-2xs group"
+              title="Reports & Business Analytics (Print / Export)"
+            >
+              <svg className="w-3.5 h-3.5 text-blue-400 group-hover:text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              <span>Print</span>
+            </button>
+
+            {/* Refresh */}
+            <button
+              onClick={() => fetchData()}
+              disabled={loading}
+              className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 hover:text-white border border-slate-700/50 transition-all cursor-pointer text-xs font-semibold shadow-2xs group disabled:opacity-50"
+              title="Refresh Catalog Data"
+            >
+              <svg className={`w-3.5 h-3.5 text-sky-400 group-hover:text-sky-300 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Sidebar Bottom - Block 2: Profile & Logout */}
+        <div className="p-2 xl:p-2.5 border-t border-slate-800/80 bg-slate-950/40 shrink-0 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-extrabold flex items-center justify-center text-xs shadow-md shrink-0 border border-blue-400/30">
+              {(user?.username?.[0] || "C").toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-white truncate leading-tight">
+                {user?.username || "cashier1"}
+              </p>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider truncate">
+                {user?.roles?.[0]?.name || "CASHIER"}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition-all shrink-0 cursor-pointer"
+            title="Logout"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+        </div>
       </aside>
 
       {/* 2. Main Work Area (Top Header + Product Catalog + Cart) */}
@@ -2203,37 +2337,6 @@ export default function POS(): JSX.Element {
 
           {/* Center Pill Action Buttons */}
           <div className="flex items-center gap-1 xl:gap-1.5 overflow-x-auto scrollbar-none py-0.5">
-            {/* Print Today's Sales */}
-            <button
-              onClick={handlePrintTodaySales}
-              disabled={printingTodaySales}
-              className="flex items-center justify-center w-7 h-7 xl:w-8 xl:h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg xl:rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
-              title="Print Today's Sales (12:00 AM - Now)"
-            >
-              {printingTodaySales ? (
-                <svg className="w-3.5 h-3.5 animate-spin text-slate-600" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                </svg>
-              ) : (
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                </svg>
-              )}
-            </button>
-
-            {/* Refresh */}
-            <button
-              onClick={() => fetchData()}
-              disabled={loading}
-              className="flex items-center justify-center w-7 h-7 xl:w-8 xl:h-8 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg xl:rounded-xl text-slate-600 hover:text-slate-900 transition-all shadow-2xs shrink-0 cursor-pointer"
-              title="Refresh Data"
-            >
-              <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-
             {/* Request Item */}
             <button
               onClick={() => setShowCustomerRequestModal(true)}
@@ -2302,16 +2405,16 @@ export default function POS(): JSX.Element {
               </button>
             )}
 
-            {/* Expenses */}
+            {/* Extras (Expenses & Notes) */}
             <button
               onClick={() => setShowExpensesPanel(true)}
               className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#fff7ed] hover:bg-[#ffedd5] text-[#ea580c] border border-[#fed7aa] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
-              title="Expenses"
+              title="Extras (Expenses & Notes)"
             >
               <svg className="w-3 h-3 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h3m-9 5h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
-              <span>Expenses</span>
+              <span>Extras</span>
             </button>
 
             {/* Returns */}
@@ -2357,6 +2460,41 @@ export default function POS(): JSX.Element {
 
           {/* Right User Profile & Connectivity */}
           <div className="flex items-center gap-1.5 xl:gap-2 shrink-0">
+            {/* Cash Drawer Session Indicator & Timer Button */}
+            <button
+              onClick={() => {
+                if (activeCashSession) {
+                  setCashDrawerModalMode("VIEW");
+                } else {
+                  setCashDrawerModalMode("OPEN");
+                }
+                setShowCashDrawerModal(true);
+              }}
+              className={`flex items-center gap-1.5 transition-all shadow-2xs shrink-0 cursor-pointer border ${
+                activeCashSession
+                  ? "px-2.5 py-1 rounded-full text-[11px] xl:text-xs font-bold bg-emerald-50 hover:bg-emerald-100/90 text-emerald-800 border-emerald-300"
+                  : "w-7 h-7 xl:w-8 xl:h-8 justify-center rounded-lg xl:rounded-xl bg-white hover:bg-amber-50 text-slate-600 hover:text-amber-700 border-slate-200 hover:border-amber-300"
+              }`}
+              title={
+                activeCashSession
+                  ? `Active Shift (${sessionTimerDisplay}) - Click to view drawer statistics & timer`
+                  : "Cash Drawer Closed - Click to open drawer & start day session"
+              }
+            >
+              {activeCashSession ? (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <Banknote className="w-3.5 h-3.5 text-emerald-700" />
+                  <span className="font-mono text-[11px]">{sessionTimerDisplay}</span>
+                </>
+              ) : (
+                <div className="relative flex items-center justify-center">
+                  <Banknote className="w-3.5 h-3.5 text-slate-600" />
+                  <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-1 ring-white" />
+                </div>
+              )}
+            </button>
+
             {/* Website Direct Login Button */}
             <button
               onClick={handleGoToWebsite}
@@ -2372,34 +2510,6 @@ export default function POS(): JSX.Element {
               <span className="w-1.5 h-1.5 rounded-full bg-[#16a34a] animate-pulse"></span>
               <span>{isOnline ? "Online" : "Offline"}</span>
             </div>
-
-            <div className="w-px h-5 bg-slate-200 mx-0.5"></div>
-
-            {/* User Info */}
-            <div className="flex items-center gap-1.5">
-              <div className="w-7 h-7 rounded-full bg-[#bae6fd] text-[#0369a1] font-extrabold flex items-center justify-center text-[11px] shadow-2xs">
-                {(user?.username?.[0] || "C").toUpperCase()}
-              </div>
-              <div className="text-left hidden lg:block">
-                <p className="text-slate-800 text-[11px] font-bold leading-tight">
-                  {user?.username || "cashier1"}
-                </p>
-                <p className="text-[8px] text-slate-400 font-bold uppercase tracking-wider">
-                  {user?.roles?.[0]?.name || "CASHIER"}
-                </p>
-              </div>
-            </div>
-
-            {/* Logout */}
-            <button
-              onClick={handleLogout}
-              className="w-7 h-7 xl:w-8 xl:h-8 flex items-center justify-center bg-white hover:bg-red-50 text-red-500 border border-slate-200 hover:border-red-200 rounded-lg xl:rounded-xl transition-all shadow-2xs shrink-0 cursor-pointer"
-              title="Logout"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
           </div>
         </header>
 
@@ -2882,6 +2992,28 @@ export default function POS(): JSX.Element {
                           </div>
                         </div>
                       )}
+
+                      {/* Show Warranty Toggle Option */}
+                      <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200/70 flex items-center justify-between text-[10px]">
+                        <span className="text-slate-500 font-medium">Show Warranty</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newCart = [...cart];
+                            newCart[index].showWarranty = !newCart[index].showWarranty;
+                            setCart(newCart);
+                          }}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold transition-all cursor-pointer ${
+                            item.showWarranty
+                              ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
+                              : "bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200"
+                          }`}
+                          title={item.showWarranty ? "Warranty will be printed on receipt" : "Warranty hidden on receipt (Default)"}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${item.showWarranty ? "bg-emerald-500" : "bg-slate-400"}`} />
+                          {item.showWarranty ? "Enabled" : "Disabled"}
+                        </button>
+                      </div>
                     </div>
                   );
                 })
@@ -2890,6 +3022,62 @@ export default function POS(): JSX.Element {
 
             {/* Cart Footer */}
             <div className="pt-2.5 xl:pt-3 border-t border-slate-100 space-y-1.5 shrink-0">
+              {/* Google Review Discount */}
+              <div className="p-2 rounded-xl bg-slate-50/90 border border-slate-200/80 mb-1 transition-all">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="google-review-toggle"
+                    className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] xl:text-xs font-semibold text-slate-700 hover:text-slate-900"
+                  >
+                    <input
+                      id="google-review-toggle"
+                      type="checkbox"
+                      checked={isGoogleReviewEnabled}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setIsGoogleReviewEnabled(checked);
+                        if (!checked) {
+                          setGoogleReviewDiscount("");
+                        }
+                      }}
+                      className="w-3.5 h-3.5 rounded text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer accent-blue-600"
+                    />
+                    <span className="flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                      </svg>
+                      <span>Google Review</span>
+                    </span>
+                  </label>
+
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400 font-bold">Rs.</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      disabled={!isGoogleReviewEnabled}
+                      value={googleReviewDiscount}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "" || !isNaN(Number(val))) {
+                          setGoogleReviewDiscount(val);
+                        }
+                      }}
+                      placeholder="0"
+                      className={`w-20 sm:w-24 px-2 py-0.5 text-right text-xs font-bold rounded border transition-all tabular-nums ${
+                        isGoogleReviewEnabled
+                          ? "bg-white border-blue-400 text-slate-800 shadow-2xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          : "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-50"
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex justify-between items-center text-[11px] xl:text-xs">
                 <span className="text-slate-500 font-medium">Subtotal</span>
                 <span className="text-slate-800 font-bold">Rs. {rawSubtotal.toLocaleString()}</span>
@@ -2941,12 +3129,14 @@ export default function POS(): JSX.Element {
           cart={cart}
           canApplyDiscount={canApplyDiscount}
           exchangePayload={exchangePayload}
+          orderDiscount={parsedGoogleReviewDiscount}
           onClose={() => setShowPaymentModal(false)}
           onSuccess={() => {
             const soldItems = [...(cartRef.current || cart)];
             clearCart();
             setShowPaymentModal(false);
             productVariantsCache.clear();
+            fetchCurrentSession(true);
 
             // Instantly deduct sold items from local inventory in memory (0ms latency!)
             if (soldItems.length > 0) {
@@ -3134,6 +3324,45 @@ export default function POS(): JSX.Element {
       {showCustomerRequestModal && (
         <CustomerRequestModal
           onClose={() => setShowCustomerRequestModal(false)}
+        />
+      )}
+
+      {/* Reports & Business Analytics Modal */}
+      {showReportsModal && (
+        <ReportsModal
+          isOpen={showReportsModal}
+          onClose={() => setShowReportsModal(false)}
+          categories={categoryTree}
+          products={products}
+          currentUser={user}
+        />
+      )}
+
+      {/* Cash Drawer Session Modal */}
+      {showCashDrawerModal && (
+        <CashDrawerModal
+          mode={cashDrawerModalMode}
+          activeSession={activeCashSession}
+          expectedOpeningAmount={expectedOpeningAmount}
+          currentCashierName={user?.username || "Cashier"}
+          onClose={() => setShowCashDrawerModal(false)}
+          onSessionStarted={(session) => {
+            setActiveCashSession(session);
+            setShowCashDrawerModal(false);
+            showSuccess("Cash drawer session opened successfully!");
+          }}
+          onSessionClosed={async (session) => {
+            setActiveCashSession(null);
+            setExpectedOpeningAmount(session.closingAmount || 0);
+            setShowCashDrawerModal(false);
+            showSuccess("Cash drawer session closed and recorded successfully!");
+            setTimeout(async () => {
+              try {
+                await logout();
+              } catch {}
+              navigate("/login");
+            }, 500);
+          }}
         />
       )}
     </div>

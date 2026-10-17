@@ -41,14 +41,20 @@ import {
   ShieldAlert,
   Eye,
   EyeOff,
+  Database,
+  Folder,
+  FolderOpen,
+  DownloadCloud,
+  FileArchive,
 } from "lucide-react";
+import { downloadBackupArchive } from "../lib/api";
 
 
 export default function Settings(): JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<"shop" | "shortcuts" | "appearance" | "hardware" | "updates">("shop");
+  const [activeTab, setActiveTab] = useState<"shop" | "shortcuts" | "appearance" | "hardware" | "updates" | "backups">("shop");
   const [shopSettings, setShopSettings] = useState<ShopSettings>(
     DEFAULT_SHOP_SETTINGS,
   );
@@ -67,8 +73,25 @@ export default function Settings(): JSX.Element {
   const [unlocking, setUnlocking] = useState<boolean>(false);
   const [unlockError, setUnlockError] = useState<string>("");
 
+  // Super Admin Authorization for Backups
+  const [isBackupsUnlocked, setIsBackupsUnlocked] = useState<boolean>(false);
+  const [backupAdminPassword, setBackupAdminPassword] = useState<string>("");
+  const [showBackupPassword, setShowBackupPassword] = useState<boolean>(false);
+  const [unlockingBackup, setUnlockingBackup] = useState<boolean>(false);
+  const [backupUnlockError, setBackupUnlockError] = useState<string>("");
+
+  // Backups State
+  const [backupPath, setBackupPath] = useState<string>("");
+  const [backupPathSaved, setBackupPathSaved] = useState<boolean>(false);
+  const [backupFiles, setBackupFiles] = useState<any[]>([]);
+  const [loadingBackupFiles, setLoadingBackupFiles] = useState<boolean>(false);
+  const [manualBackingUp, setManualBackingUp] = useState<boolean>(false);
+  const [manualBackupSuccess, setManualBackupSuccess] = useState<string>("");
+  const [manualBackupError, setManualBackupError] = useState<string>("");
+  const [dbStats, setDbStats] = useState<{ databaseName?: string; collectionsCount?: number; totalDocuments?: number } | null>(null);
+
   // Auto-Updater State
-  const [appVersion, setAppVersion] = useState<string>("1.1.0");
+  const [appVersion, setAppVersion] = useState<string>("1.2.1");
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
   const [githubToken, setGithubToken] = useState<string>("");
   const [tokenSaved, setTokenSaved] = useState<boolean>(false);
@@ -374,6 +397,166 @@ export default function Settings(): JSX.Element {
     }
   };
 
+  const loadBackupConfig = async () => {
+    try {
+      if (window.ipcRenderer) {
+        const conf = await window.ipcRenderer.invoke("get_backup_config");
+        if (conf?.destinationPath) {
+          setBackupPath(conf.destinationPath);
+        }
+      } else {
+        const saved = localStorage.getItem("pos_backup_path") || "C:\\Hotline_POS_Backups";
+        setBackupPath(saved);
+      }
+    } catch (e) {
+      console.warn("Could not load backup config:", e);
+    }
+  };
+
+  const loadBackupFiles = async (customPath?: string) => {
+    setLoadingBackupFiles(true);
+    try {
+      if (window.ipcRenderer) {
+        const res = await window.ipcRenderer.invoke("list_backup_files", customPath || backupPath);
+        if (res?.success) {
+          setBackupFiles(res.files || []);
+        }
+      }
+      // Fetch DB stats from backend
+      const statsRes = await api<any>("/backups/stats").catch(() => null);
+      if (statsRes?.status === "success" && statsRes.data) {
+        setDbStats(statsRes.data);
+      }
+    } catch (e) {
+      console.warn("Error loading backup files:", e);
+    } finally {
+      setLoadingBackupFiles(false);
+    }
+  };
+
+  const handleUnlockBackups = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!backupAdminPassword.trim()) {
+      setBackupUnlockError("Please enter the Super Admin password.");
+      return;
+    }
+    setUnlockingBackup(true);
+    setBackupUnlockError("");
+
+    try {
+      const res = await api<{ status: string; message?: string; data?: { verified: boolean } }>(
+        "/auth/verify-superadmin",
+        {
+          method: "POST",
+          body: JSON.stringify({ password: backupAdminPassword.trim() }),
+        }
+      );
+      if (res?.status === "success" || res?.data?.verified) {
+        setIsBackupsUnlocked(true);
+        setBackupAdminPassword("");
+        setBackupUnlockError("");
+        await loadBackupConfig();
+        await loadBackupFiles();
+      } else {
+        setBackupUnlockError(res?.message || "Invalid Super Admin password.");
+      }
+    } catch (err: any) {
+      console.error("Super Admin verification error for Backups:", err);
+      setBackupUnlockError(err?.message || "Failed to verify Super Admin password. Please check credentials.");
+    } finally {
+      setUnlockingBackup(false);
+    }
+  };
+
+  const handleSelectBackupDirectory = async () => {
+    if (!window.ipcRenderer) return;
+    try {
+      const selected = await window.ipcRenderer.invoke("select_backup_directory");
+      if (selected) {
+        setBackupPath(selected);
+        await window.ipcRenderer.invoke("save_backup_config", { destinationPath: selected });
+        localStorage.setItem("pos_backup_path", selected);
+        setBackupPathSaved(true);
+        setTimeout(() => setBackupPathSaved(false), 2500);
+        loadBackupFiles(selected);
+      }
+    } catch (err) {
+      console.error("Directory selection error:", err);
+    }
+  };
+
+  const handleSaveBackupPath = async () => {
+    if (!backupPath.trim()) return;
+    try {
+      if (window.ipcRenderer) {
+        await window.ipcRenderer.invoke("save_backup_config", { destinationPath: backupPath.trim() });
+      }
+      localStorage.setItem("pos_backup_path", backupPath.trim());
+      setBackupPathSaved(true);
+      setTimeout(() => setBackupPathSaved(false), 2500);
+      loadBackupFiles(backupPath.trim());
+    } catch (err) {
+      console.error("Save backup path error:", err);
+    }
+  };
+
+  const handleOpenBackupDirectory = async () => {
+    if (window.ipcRenderer) {
+      await window.ipcRenderer.invoke("open_backup_directory", backupPath);
+    }
+  };
+
+  const handleManualBackup = async () => {
+    setManualBackingUp(true);
+    setManualBackupSuccess("");
+    setManualBackupError("");
+    try {
+      const backupData = await downloadBackupArchive("MANUAL_SETTINGS", 30000);
+      if (!backupData) {
+        setManualBackupError("Failed to generate database backup. Check server connection.");
+        return;
+      }
+
+      if (window.ipcRenderer) {
+        const saveRes = await window.ipcRenderer.invoke("save_backup_archive", {
+          buffer: backupData.buffer,
+          filename: backupData.filename,
+          targetPath: backupPath,
+        });
+
+        if (saveRes?.success) {
+          const sizeKb = (saveRes.size / 1024).toFixed(1);
+          setManualBackupSuccess(`Backup saved: ${saveRes.filename} (${sizeKb} KB)`);
+          await loadBackupFiles();
+        } else {
+          setManualBackupError(saveRes?.error || "Failed to write backup to local disk.");
+        }
+      } else {
+        // Browser fallback: trigger file download
+        const blob = new Blob([backupData.buffer], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = backupData.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        setManualBackupSuccess(`Backup downloaded: ${backupData.filename}`);
+      }
+    } catch (err: any) {
+      setManualBackupError(err?.message || "An unexpected error occurred during backup.");
+    } finally {
+      setManualBackingUp(false);
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (!bytes || bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
   return (
     <div className="h-screen w-screen overflow-y-auto overflow-x-hidden flex flex-col bg-gradient-to-br from-sky-50 via-blue-50 to-white dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 scrollbar-thin">
       {/* Header */}
@@ -457,6 +640,17 @@ export default function Settings(): JSX.Element {
           >
             <Rocket className="w-4 h-4" /> Software Updates
             {!isUpdatesUnlocked && <Lock className="w-3.5 h-3.5 text-slate-400" />}
+          </button>
+          <button
+            onClick={() => setActiveTab("backups")}
+            className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === "backups"
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-700 hover:text-blue-700 border border-slate-200/60 dark:border-slate-700"
+            }`}
+          >
+            <Database className="w-4 h-4" /> Backups
+            {!isBackupsUnlocked && <Lock className="w-3.5 h-3.5 text-slate-400" />}
           </button>
         </div>
 
@@ -1320,6 +1514,309 @@ export default function Settings(): JSX.Element {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Backups Tab - Permission Required View */}
+        {activeTab === "backups" && !isBackupsUnlocked && (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200/80 dark:border-slate-700 shadow-sm max-w-md mx-auto my-12 text-center animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4 shadow-xs">
+              <ShieldAlert className="w-7 h-7" />
+            </div>
+
+            <h2 className="text-lg font-bold text-slate-800 dark:text-white">Permission Required</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+              Database backups and storage configuration require Super Admin authorization. Please enter the Super Admin account password to unlock.
+            </p>
+
+            <form onSubmit={handleUnlockBackups} className="mt-6 space-y-4 text-left">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  Super Admin Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showBackupPassword ? "text" : "password"}
+                    placeholder="Enter super admin password"
+                    value={backupAdminPassword}
+                    onChange={(e) => {
+                      setBackupAdminPassword(e.target.value);
+                      if (backupUnlockError) setBackupUnlockError("");
+                    }}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-800 dark:text-white placeholder-slate-400 focus:bg-white dark:focus:bg-slate-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm outline-none pr-10"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBackupPassword(!showBackupPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    tabIndex={-1}
+                  >
+                    {showBackupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {backupUnlockError && (
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{backupUnlockError}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("shop")}
+                  className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={unlockingBackup || !backupAdminPassword.trim()}
+                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-md shadow-blue-500/25 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {unlockingBackup ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Verifying...
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" /> Unlock Backups
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Backups Tab - Unlocked View */}
+        {activeTab === "backups" && isBackupsUnlocked && (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200/80 dark:border-slate-700 space-y-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                  <Database className="w-5 h-5 text-blue-600" /> Database Backups
+                </h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  Configure backup storage location, run manual database exports, and inspect saved archives
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBackupsUnlocked(false);
+                    setBackupAdminPassword("");
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                  title="Lock Backups tab"
+                >
+                  <Lock className="w-3.5 h-3.5" /> Lock
+                </button>
+              </div>
+            </div>
+
+            {/* Storage Folder Configuration Card */}
+            <div className="bg-slate-50 dark:bg-slate-900/60 rounded-xl p-5 border border-slate-200/80 dark:border-slate-700/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <Folder className="w-4 h-4 text-blue-600" /> Backup Storage Folder
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Location on this machine where automated session backups and manual exports are saved.
+                  </p>
+                </div>
+                {backupPathSaved && (
+                  <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg font-medium animate-in fade-in flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Path Saved
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <input
+                  type="text"
+                  value={backupPath}
+                  onChange={(e) => setBackupPath(e.target.value)}
+                  placeholder="e.g. C:\Hotline_POS_Backups"
+                  className="flex-1 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono shadow-2xs"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSelectBackupDirectory}
+                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-slate-600" /> Browse Folder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveBackupPath}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer shadow-2xs"
+                  >
+                    Save Path
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenBackupDirectory}
+                    className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer shadow-2xs"
+                    title="Open in Windows Explorer"
+                  >
+                    Open Folder
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                * When the cashier ends their session, the database collections are automatically compressed into a dated ZIP and saved directly here.
+              </p>
+            </div>
+
+            {/* Manual Backup Action Card & DB Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2 bg-slate-50 dark:bg-slate-900/60 rounded-xl p-5 border border-slate-200/80 dark:border-slate-700/80 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <DownloadCloud className="w-4 h-4 text-blue-600" /> Instant Database Export
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                    Immediately fetch all collections from the active MongoDB database and generate a timestamped ZIP archive.
+                  </p>
+                </div>
+
+                {manualBackupSuccess && (
+                  <div className="my-3 p-3 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{manualBackupSuccess}</span>
+                  </div>
+                )}
+
+                {manualBackupError && (
+                  <div className="my-3 p-3 text-xs bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{manualBackupError}</span>
+                  </div>
+                )}
+
+                <div className="pt-3">
+                  <button
+                    type="button"
+                    disabled={manualBackingUp}
+                    onClick={handleManualBackup}
+                    className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {manualBackingUp ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" /> Exporting Database & Archiving...
+                      </>
+                    ) : (
+                      <>
+                        <Database className="w-4 h-4" /> Create Backup Now
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* DB Quick Stats */}
+              <div className="bg-slate-50 dark:bg-slate-900/60 rounded-xl p-5 border border-slate-200/80 dark:border-slate-700/80 flex flex-col justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                    Database Overview
+                  </span>
+                  <div className="mt-2 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Database:</span>
+                      <span className="font-mono font-bold text-slate-900 dark:text-white">
+                        {dbStats?.databaseName || "hotline_pos"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Collections:</span>
+                      <span className="font-mono font-bold text-blue-600">
+                        {dbStats?.collectionsCount ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Records:</span>
+                      <span className="font-mono font-bold text-emerald-600">
+                        {dbStats?.totalDocuments?.toLocaleString() ?? "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-3 text-[10px] text-slate-400">
+                  Live connection to backend API
+                </div>
+              </div>
+            </div>
+
+            {/* Stored Backup Archives History */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                  <FileArchive className="w-4 h-4 text-slate-600" /> Stored Backup Archives ({backupFiles.length})
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => loadBackupFiles()}
+                  disabled={loadingBackupFiles}
+                  className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loadingBackupFiles ? "animate-spin" : ""}`} /> Refresh List
+                </button>
+              </div>
+
+              {backupFiles.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200/80 dark:border-slate-700 text-xs text-slate-500">
+                  No backup archives found in <span className="font-mono font-semibold">{backupPath || "configured folder"}</span>.
+                  Click "Create Backup Now" or close a drawer session to generate the first backup.
+                </div>
+              ) : (
+                <div className="border border-slate-200/90 dark:border-slate-700 rounded-xl overflow-hidden shadow-2xs">
+                  <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-700">
+                        <tr>
+                          <th className="px-4 py-2.5">Archive File</th>
+                          <th className="px-4 py-2.5">Size</th>
+                          <th className="px-4 py-2.5">Saved At</th>
+                          <th className="px-4 py-2.5 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {backupFiles.map((f, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/80 dark:hover:bg-slate-900/40 transition-colors">
+                            <td className="px-4 py-2.5 font-mono text-slate-800 dark:text-slate-200 font-medium">
+                              {f.filename}
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400 font-mono">
+                              {formatFileSize(f.size)}
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400">
+                              {new Date(f.modifiedAt).toLocaleString()}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              <button
+                                type="button"
+                                onClick={handleOpenBackupDirectory}
+                                className="px-2 py-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                Show in Folder
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

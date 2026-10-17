@@ -9,6 +9,8 @@ export { BranchSelectorModal } from './modals/BranchSelectorModal';
 export { VariantSelectionModal } from './modals/VariantSelectionModal';
 export { PermissionOverrideModal } from './modals/PermissionOverrideModal';
 export { CustomerRequestModal } from './modals/CustomerRequestModal';
+export { ReportsModal } from './modals/ReportsModal';
+export { CashDrawerModal } from './modals/CashDrawerModal';
 
 // Panels
 export { SalesPanel } from './panels/SalesPanel';
@@ -19,5 +21,5 @@ export { WarrantyPanel } from './panels/WarrantyPanel';
 // Types (re-export for convenience)
 export * from '../../types/pos';
 
-export { ExpensesPanel } from './panels/ExpensesPanel';
+export { ExtrasPanel, ExpensesPanel } from './panels/ExtrasPanel';
 export { SimReloadPanel } from './panels/SimReloadPanel';

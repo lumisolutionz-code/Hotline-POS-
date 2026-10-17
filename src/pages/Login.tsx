@@ -14,8 +14,18 @@ export default function Login(): JSX.Element {
   const [branchError, setBranchError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [appVersion, setAppVersion] = useState("1.2.1");
   const navigate = useNavigate();
   const { login, isAuthenticated, hasPermission, user } = useAuth();
+
+  useEffect(() => {
+    if (window.ipcRenderer) {
+      window.ipcRenderer.invoke("get_app_version").then((ver: string) => {
+        if (ver) setAppVersion(ver);
+      }).catch(() => {});
+    }
+  }, []);
+
   // Redirect if already logged in
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -244,7 +254,7 @@ export default function Login(): JSX.Element {
             </button>
           </form>
           <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            Hotline POS System v1.0
+            Hotline POS System v{appVersion}
           </p>
         </div>
       </div>

@@ -20,12 +20,18 @@ export function VariantSelectionModal({
   onClose: () => void;
   onSelectVariant: (variant: ProductVariant, serialNumber?: string, stockItemId?: string, stockItemPrice?: number) => void;
 }) {
+  // Local variants list that can be updated from parent or from background API
+  const [variantsList, setVariantsList] = useState<ProductVariant[]>(() => {
+    return Array.isArray(product.variants) ? product.variants : [];
+  });
+
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(() => {
-    if (initialVariantId && product.variants && product.variants.length > 0) {
-      const found = product.variants.find((v) => String(v._id) === String(initialVariantId));
+    const list = Array.isArray(product.variants) && product.variants.length > 0 ? product.variants : [];
+    if (initialVariantId && list.length > 0) {
+      const found = list.find((v) => String(v._id) === String(initialVariantId));
       if (found) return found;
     }
-    return product.variants && product.variants.length > 0 ? product.variants[0] : null;
+    return list.length > 0 ? list[0] : null;
   });
 
   // Physical stock items (individual devices with IMEIs)
@@ -35,7 +41,6 @@ export function VariantSelectionModal({
   const [isLoadingStock, setIsLoadingStock] = useState<boolean>(false);
   const isDataLoading = Boolean(isLoading || isLoadingStock);
   const [selectedStockItem, setSelectedStockItem] = useState<any | null>(null);
-
 
   // Code / Search Input: accepts Device IMEI for IMEI products, or Barcode/SKU/Serial for Quantity products
   const [codeInput, setCodeInput] = useState<string>(initialSerialNumber || "");
@@ -65,7 +70,7 @@ export function VariantSelectionModal({
 
     const catName = typeof product.category === "object" ? product.category?.name || "" : "";
     if (/phone|cellular|smartphone|tablet/i.test(catName) && !/accessory|accessories/i.test(catName)) return true;
-    if (/(iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei)/i.test(product.name || "")) return true;
+    if (/\b(phone|smartphone|iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei)\b/i.test(product.name || "")) return true;
     return false;
   })();
 
@@ -92,30 +97,83 @@ export function VariantSelectionModal({
     }
   }, [product.stockItems]);
 
-  // Sync selected variant when product.variants arrives/updates from parent
+  // Sync incoming variants if updated from parent
   useEffect(() => {
-    if (!selectedVariant && product.variants && product.variants.length > 0) {
+    if (Array.isArray(product.variants) && product.variants.length > 0) {
+      setVariantsList(product.variants);
+    }
+  }, [product.variants]);
+
+  // Sync selected variant when variants list arrives/updates
+  useEffect(() => {
+    const activeList = variantsList.length > 0 ? variantsList : (product.variants || []);
+    if (!selectedVariant && activeList.length > 0) {
       const found = initialVariantId
-        ? product.variants.find((v) => String(v._id) === String(initialVariantId))
+        ? activeList.find((v) => String(v._id) === String(initialVariantId))
         : null;
-      setSelectedVariant(found || product.variants[0]);
-    } else if (selectedVariant && product.variants && product.variants.length > 0) {
-      const updated = product.variants.find((v) => String(v._id) === String(selectedVariant._id));
+      setSelectedVariant(found || activeList[0]);
+    } else if (selectedVariant && activeList.length > 0) {
+      const updated = activeList.find((v) => String(v._id) === String(selectedVariant._id));
       if (updated && (updated.sellingPrice !== selectedVariant.sellingPrice || (updated as any).stock !== (selectedVariant as any).stock || updated.stockQty !== selectedVariant.stockQty)) {
         setSelectedVariant(updated);
       }
     }
-  }, [product.variants, initialVariantId, selectedVariant]);
+  }, [variantsList, product.variants, initialVariantId, selectedVariant]);
 
-  // Fetch stock items if not already passed in and product is IMEI tracked
+  // Helper to reliably resolve variant for any physical device without failing
+  const resolveDeviceVariant = (item: any): ProductVariant => {
+    const itemVariantId = item?.variant?._id || item?.variant;
+    const activeVariants = variantsList.length > 0 ? variantsList : (product.variants || []);
+
+    let foundVar = activeVariants.find((v) => String(v._id) === String(itemVariantId));
+    if (!foundVar && selectedVariant) {
+      foundVar = selectedVariant;
+    }
+    if (!foundVar && activeVariants.length > 0) {
+      foundVar = activeVariants[0];
+    }
+    if (!foundVar && item?.variant && typeof item.variant === "object" && item.variant._id) {
+      foundVar = item.variant as ProductVariant;
+    }
+    if (!foundVar) {
+      // Safe fallback virtual variant for products where variants are optional or snapshot-based
+      foundVar = {
+        _id: (typeof item?.variant === "string" ? item.variant : undefined) || (product._id as string),
+        product: product._id as any,
+        name: product.name,
+        attributes: item?.variant?.attributes || [],
+        sellingPrice: item?.sellingPrice || product.sellingPrice || 0,
+        costPrice: item?.costPrice || product.costPrice || 0,
+        originalPrice: product.originalPrice || product.sellingPrice || 0,
+        effectivePrice: item?.sellingPrice || product.sellingPrice || 0,
+        stock: 1,
+        stockQty: 1,
+        isActive: true,
+      } as ProductVariant;
+    }
+    return foundVar;
+  };
+
+  // Fetch stock items & variants if not already passed in
   useEffect(() => {
     let isMounted = true;
     if (isImeiProduct && (!product.stockItems || product.stockItems.length === 0) && !isLoading) {
       setIsLoadingStock(true);
       apiGet<any>(`/products/${product._id}/with-variants`)
         .then((res) => {
-          if (isMounted && res?.status === "success" && Array.isArray(res.data?.stockItems)) {
-            setStockItems(res.data.stockItems);
+          if (isMounted && res?.status === "success") {
+            if (Array.isArray(res.data?.stockItems)) {
+              setStockItems(res.data.stockItems);
+            }
+            if (Array.isArray(res.data?.variants) && res.data.variants.length > 0) {
+              setVariantsList(res.data.variants);
+              if (!selectedVariant) {
+                const initFound = initialVariantId
+                  ? res.data.variants.find((v: any) => String(v._id) === String(initialVariantId))
+                  : null;
+                setSelectedVariant(initFound || res.data.variants[0]);
+              }
+            }
           }
         })
         .catch((err) => {
@@ -130,7 +188,7 @@ export function VariantSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [product._id, product.stockItems, isImeiProduct, isLoading]);
+  }, [product._id, product.stockItems, isImeiProduct, isLoading, initialVariantId, selectedVariant]);
 
   // Auto-focus code input on mount reliably
   useEffect(() => {
@@ -265,27 +323,26 @@ export function VariantSelectionModal({
       const im2 = String(item.imei2 || "").toLowerCase();
       const sn = String(item.serialNumber || "").toLowerCase();
 
-      const matchingVar = product.variants?.find(
-        (v) => String(v._id) === String(item.variant?._id || item.variant)
-      );
+      const matchingVar = resolveDeviceVariant(item);
       const varBadges = matchingVar ? getVariantBadges(matchingVar).join(" ").toLowerCase() : "";
 
       return im1.includes(trimmed) || im2.includes(trimmed) || sn.includes(trimmed) || varBadges.includes(trimmed);
     });
-  }, [stockItems, codeInput, product.variants]);
+  }, [stockItems, codeInput, variantsList, product.variants]);
 
   // Filter variants (for non-IMEI items or when displaying variant list)
   const filteredVariants = useMemo(() => {
     const trimmed = codeInput.trim().toLowerCase();
-    if (!trimmed) return product.variants || [];
-    return (product.variants || []).filter((v: any) => {
+    const activeVariants = variantsList.length > 0 ? variantsList : (product.variants || []);
+    if (!trimmed) return activeVariants;
+    return activeVariants.filter((v: any) => {
       const badges = getVariantBadges(v).join(" ").toLowerCase();
       const barcode = String(v.barcode || "").toLowerCase();
       const sku = String(v.sku || "").toLowerCase();
       const itemCode = String(v.itemCode || "").toLowerCase();
       return badges.includes(trimmed) || barcode.includes(trimmed) || sku.includes(trimmed) || itemCode.includes(trimmed);
     });
-  }, [product.variants, codeInput]);
+  }, [variantsList, product.variants, codeInput]);
 
   // Handle clicking / selecting a device from the list
   const handleSelectDevice = (item: any) => {
@@ -294,9 +351,7 @@ export function VariantSelectionModal({
       return;
     }
 
-    const matchingVar = product.variants?.find(
-      (v) => String(v._id) === String(item.variant?._id || item.variant)
-    ) || selectedVariant || product.variants?.[0] || null;
+    const matchingVar = resolveDeviceVariant(item);
 
     if (matchingVar) {
       setSelectedVariant(matchingVar);
@@ -316,15 +371,7 @@ export function VariantSelectionModal({
       return;
     }
 
-    const matchingVar = product.variants?.find(
-      (v) => String(v._id) === String(item.variant?._id || item.variant)
-    ) || selectedVariant || product.variants?.[0];
-
-    if (!matchingVar) {
-      showError("No matching variant found for this device.");
-      return;
-    }
-
+    const matchingVar = resolveDeviceVariant(item);
     const finalSerial = item.imei1 || item.imei2 || item.serialNumber || "";
     const finalPrice = item.sellingPrice || getFinalPrice(matchingVar, item);
 
@@ -335,15 +382,21 @@ export function VariantSelectionModal({
   useEffect(() => {
     if (initialSerialNumber) {
       setCodeInput(initialSerialNumber);
-      const matchInList = stockItems.find(
+      const exactMatch = stockItems.find(
         (si) =>
           String(si.imei1 || "").trim().toLowerCase() === initialSerialNumber.trim().toLowerCase() ||
           String(si.imei2 || "").trim().toLowerCase() === initialSerialNumber.trim().toLowerCase()
       );
-      if (matchInList) {
-        handleSelectDevice(matchInList);
+      if (exactMatch) {
+        handleSelectDevice(exactMatch);
       } else {
-        verifyCode(initialSerialNumber, false);
+        const isStockBatchSerial = stockItems.some(
+          (si) => String(si.serialNumber || "").trim().toLowerCase() === initialSerialNumber.trim().toLowerCase()
+        );
+        // Only trigger backend code verification if it's not a known stock batch serial in memory
+        if (!isStockBatchSerial) {
+          verifyCode(initialSerialNumber, false);
+        }
       }
     }
   }, [initialSerialNumber, stockItems]);
@@ -436,18 +489,7 @@ export function VariantSelectionModal({
             return false;
           }
 
-          const itemVariantId = stockItem.variant?._id || stockItem.variant;
-          let matchedVariant: ProductVariant | null = null;
-          if (itemVariantId && product.variants && product.variants.length > 0) {
-            matchedVariant = product.variants.find((v) => String(v._id) === String(itemVariantId)) || null;
-          }
-
-          const targetVariant = matchedVariant || selectedVariant || product.variants?.[0];
-          if (!targetVariant) {
-            showError("No matching variant found for this IMEI.");
-            setIsVerifying(false);
-            return false;
-          }
+          const targetVariant = resolveDeviceVariant(stockItem);
 
           setSelectedVariant(targetVariant);
           setVerifiedStockItem(stockItem);
@@ -593,15 +635,7 @@ export function VariantSelectionModal({
 
       if (!targetStockItem) return;
 
-      const itemVariantId = targetStockItem?.variant?._id || targetStockItem?.variant;
-      const matchedVariant = (itemVariantId && product.variants?.find((v) => String(v._id) === String(itemVariantId))) || null;
-      const finalVariant = matchedVariant || selectedVariant || product.variants?.[0];
-
-      if (!finalVariant) {
-        showError("No matching variant found for this device.");
-        return;
-      }
-
+      const finalVariant = resolveDeviceVariant(targetStockItem);
       const finalSerial = targetStockItem.imei1 || targetStockItem.imei2 || targetStockItem.serialNumber || codeInput.trim();
       const finalPrice = targetStockItem.sellingPrice || getFinalPrice(finalVariant, targetStockItem);
 
@@ -649,8 +683,8 @@ export function VariantSelectionModal({
   );
 
   const canConfirm = isImeiProduct
-    ? Boolean((selectedStockItem || (isVerifiedForCurrentInput && verifiedStockItem)) && (selectedVariant || product.variants?.[0]))
-    : Boolean(selectedVariant);
+    ? Boolean(selectedStockItem || (isVerifiedForCurrentInput && verifiedStockItem) || filteredStockItems.length === 1)
+    : Boolean(selectedVariant || variantsList.length > 0 || (product.variants && product.variants.length > 0));
 
   const displayFinalPrice = selectedStockItem?.sellingPrice || verifiedStockItem?.sellingPrice || (selectedVariant ? getFinalPrice(selectedVariant, verifiedStockItem || selectedStockItem) : 0);
 
@@ -774,12 +808,16 @@ export function VariantSelectionModal({
 
                         // Real-time instant auto-matching when typing
                         if (isImeiProduct && stockItems.length > 0) {
-                          // 1. Exact match on IMEI
-                          const exact = stockItems.find(
-                            (si) =>
-                              String(si.imei1 || "").trim().toLowerCase() === valTrimmed ||
-                              String(si.imei2 || "").trim().toLowerCase() === valTrimmed
-                          );
+                          // 1. Exact match on IMEI (checks direct match or if barcode scanner appended IMEI)
+                          const exact = stockItems.find((si) => {
+                            const im1 = String(si.imei1 || "").trim().toLowerCase();
+                            const im2 = String(si.imei2 || "").trim().toLowerCase();
+                            return (
+                              (im1 && (valTrimmed === im1 || (im1.length >= 6 && valTrimmed.endsWith(im1)))) ||
+                              (im2 && (valTrimmed === im2 || (im2.length >= 6 && valTrimmed.endsWith(im2))))
+                            );
+                          });
+
                           if (exact) {
                             handleSelectDevice(exact);
                             return;
@@ -796,9 +834,7 @@ export function VariantSelectionModal({
                           if (matches.length === 1 && valTrimmed.length >= 3) {
                             const matchedItem = matches[0];
                             setSelectedStockItem(matchedItem);
-                            const matchingVar = product.variants?.find(
-                              (v) => String(v._id) === String(matchedItem.variant?._id || matchedItem.variant)
-                            ) || selectedVariant;
+                            const matchingVar = resolveDeviceVariant(matchedItem);
                             if (matchingVar) setSelectedVariant(matchingVar);
                             setVerifiedStockItem(matchedItem);
                             setVerifiedCode(matchedItem.imei1 || matchedItem.imei2 || val.trim());
@@ -828,7 +864,7 @@ export function VariantSelectionModal({
                           } else if (filteredStockItems.length === 1) {
                             handleQuickAddDevice(filteredStockItems[0]);
                           } else {
-                            verifyCode(codeInput, false);
+                            verifyCode(codeInput, true);
                           }
                         }
                       }}
@@ -1031,9 +1067,7 @@ export function VariantSelectionModal({
                       const isAlreadyInCart = isItemAlreadyInCart(item);
                       const isDeviceSelected = selectedStockItem?._id === item._id || (verifiedCode && (verifiedCode === item.imei1 || verifiedCode === item.imei2));
                       
-                      const matchingVar = product.variants?.find(
-                        (v) => String(v._id) === String(item.variant?._id || item.variant)
-                      ) || selectedVariant;
+                      const matchingVar = resolveDeviceVariant(item);
                       
                       const badges = matchingVar ? getVariantBadges(matchingVar) : ["Standard"];
                       const price = item.sellingPrice || (matchingVar ? getVariantPrice(matchingVar) : (product.effectivePrice || product.sellingPrice || 0));

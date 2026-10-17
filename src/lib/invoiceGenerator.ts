@@ -759,7 +759,8 @@ export function generateSaleInvoiceHtml(
     const variantText = safeGetVariantText(it);
     const imeiText = safeGetImeiText(it);
     const serialText = safeGetSerialText(it);
-    const itWarranty = safeGetWarrantyText(it, isMobile, warrantyText);
+    const shouldShowWarranty = Boolean(it.showWarranty);
+    const itWarranty = shouldShowWarranty ? safeGetWarrantyText(it, isMobile, warrantyText) : "";
 
     let desc = `<strong>${escapeHtml(rawName.trim())}</strong>`;
     if (variantText) {
@@ -821,7 +822,7 @@ export function generateSaleInvoiceHtml(
     invoiceDate: dateStr,
     dueDate: "Paid in Full",
     paymentMethod: sale.paymentMethod || "CASH",
-    warranty: hasMobile ? (warrantyText || "1 Year Warranty") : undefined,
+    warranty: (sale.items || []).some((it: any) => Boolean(it.showWarranty)) ? (warrantyText || "1 Year Warranty") : undefined,
     isPreprintedPaper: usePreprinted,
     billFrom: {
       name: settings.shopName || "Hotline Cellular",
@@ -846,8 +847,8 @@ export function generateSaleInvoiceHtml(
     total: grandTotal,
     amountPaid,
     balanceDue: changeGiven,
-    terms: hasMobile
-      ? `Thank you for purchasing from Hotline Cellular. All genuine brand mobile phones include ${escapeHtml(warrantyText || "1 Year Warranty")}. Please retain this invoice for any service or warranty claims.`
+    terms: (sale.items || []).some((it: any) => Boolean(it.showWarranty))
+      ? `Thank you for purchasing from Hotline Cellular. All genuine brand mobile phones and eligible items include ${escapeHtml(warrantyText || "1 Year Warranty")}. Please retain this invoice for any service or warranty claims.`
       : "Thank you for purchasing from Hotline Cellular. Please inspect all items upon receipt. Retain this original invoice for your records.",
   };
 
@@ -1524,7 +1525,8 @@ export function generateSaleBillHtml(
           const variantText = safeGetVariantText(item);
           const imeiText = safeGetImeiText(item);
           const serialText = safeGetSerialText(item);
-          const itemWarranty = safeGetWarrantyText(item, isDevice, warrantyText);
+          const shouldShowWarranty = Boolean(item.showWarranty);
+          const itemWarranty = shouldShowWarranty ? safeGetWarrantyText(item, isDevice, warrantyText) : "";
 
           const displayName = escapeHtml(rawName.trim());
 
@@ -1991,7 +1993,7 @@ export function generateSaleBillHtml(
     <div class="footer-section">
       <div class="footer-brand">HOTLINE CELLULAR</div>
       <div class="footer-line">Thank you for shopping with us!</div>
-      ${hasMobile ? `
+      ${(sale.items || []).some((it: any) => Boolean(it.showWarranty)) ? `
       <div class="footer-line footer-warranty">${escapeHtml(warrantyText || "1 Year Official Brand Warranty")}</div>
       ` : ""}
       <div class="footer-line" style="font-size: 10px; margin-top: 2px;">Retain receipt for warranty validation.</div>
@@ -2946,25 +2948,960 @@ export function generateDailySalesReportHtml(
 </html>`;
 }
 
+export interface ReportFilterCriteria {
+  reportType: "sales" | "repairs" | "summary";
+  datePreset?: string;
+  startDate?: string | Date;
+  endDate?: string | Date;
+  categoryName?: string;
+  minPrice?: number | string;
+  maxPrice?: number | string;
+  paymentMethod?: string;
+  status?: string;
+  searchQuery?: string;
+}
+
+export interface BusinessReportData {
+  reportType: "sales" | "repairs" | "summary";
+  title?: string;
+  filters: ReportFilterCriteria;
+  sales?: any[];
+  repairs?: any[];
+  summaryMetrics?: {
+    totalRecords: number;
+    totalAmount: number;
+    totalItems?: number;
+    totalDiscount?: number;
+    totalPaid?: number;
+    totalDue?: number;
+    paymentBreakdown?: Record<string, number>;
+    statusBreakdown?: Record<string, number>;
+  };
+  user?: any;
+  shopSettings?: ShopSettings;
+}
+
+/**
+ * Generate official A4 Business Report HTML (very similar to business invoice template with logos, framed border, and multi-page support)
+ */
+export function generateBusinessReportHtml(data: BusinessReportData): string {
+  const settings = data.shopSettings || getShopSettings();
+  const shopName = settings.shopName || "Hotline Cellular";
+  const address = settings.address || "No 27, Katuwana Road, Homagama";
+  const secondAddress = "No 1, Hanwella road, Padukka";
+  const combinedAddress = address.includes("Padukka")
+    ? address
+    : `${address} &nbsp;|&nbsp; ${secondAddress}`;
+  const phone = settings.phone || "0777309726 / 0777476279";
+  const email = settings.email || "hotlinephoneshop@gmail.com";
+  const regNo = settings.regNo || "PV 00301591";
+  const cashierName = data.user?.username || data.user?.name || "Administrator";
+  const reportId = `REP-${Date.now().toString().slice(-8)}`;
+
+  const now = new Date();
+  const generatedAtStr = now.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }) + " at " + now.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  const reportTitle = data.title || (
+    data.reportType === "sales"
+      ? "OFFICIAL SALES REPORT"
+      : data.reportType === "repairs"
+      ? "OFFICIAL REPAIRS REPORT"
+      : "BUSINESS OPERATIONS REPORT"
+  );
+
+  // Format date range text
+  let dateRangeStr = "All Time";
+  if (data.filters.startDate && data.filters.endDate) {
+    const s = new Date(data.filters.startDate);
+    const e = new Date(data.filters.endDate);
+    dateRangeStr = `${s.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })} - ${e.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
+  } else if (data.filters.datePreset) {
+    dateRangeStr = data.filters.datePreset.toUpperCase();
+  }
+
+  // Active filters list
+  const activeFilters: string[] = [];
+  if (data.filters.categoryName && data.filters.categoryName !== "all") {
+    activeFilters.push(`Category: ${data.filters.categoryName}`);
+  }
+  if (data.filters.minPrice || data.filters.maxPrice) {
+    const min = data.filters.minPrice ? `Rs. ${Number(data.filters.minPrice).toLocaleString()}` : "Rs. 0";
+    const max = data.filters.maxPrice ? `Rs. ${Number(data.filters.maxPrice).toLocaleString()}` : "Any";
+    activeFilters.push(`Price: ${min} - ${max}`);
+  }
+  if (data.filters.paymentMethod && data.filters.paymentMethod !== "all") {
+    activeFilters.push(`Payment: ${data.filters.paymentMethod.toUpperCase()}`);
+  }
+  if (data.filters.status && data.filters.status !== "all") {
+    activeFilters.push(`Status: ${data.filters.status.toUpperCase()}`);
+  }
+  if (data.filters.searchQuery && data.filters.searchQuery.trim()) {
+    activeFilters.push(`Search: "${data.filters.searchQuery.trim()}"`);
+  }
+
+  const isSales = data.reportType === "sales" || (data.sales && data.sales.length > 0 && (!data.repairs || data.repairs.length === 0));
+  const defaultMetrics = {
+    totalRecords: isSales ? (data.sales?.length || 0) : (data.repairs?.length || 0),
+    totalAmount: isSales
+      ? (data.sales || []).reduce((sum, s) => sum + Number(s.grandTotal || s.total || 0), 0)
+      : (data.repairs || []).reduce((sum, r) => sum + Number(r.totalCost || r.serviceCost || 0), 0),
+    totalItems: isSales
+      ? (data.sales || []).reduce((sum, s) => sum + (Array.isArray(s.items) ? s.items.reduce((iSum: number, it: any) => iSum + (Number(it.quantity) || 1), 0) : 1), 0)
+      : (data.repairs?.length || 0),
+    totalDiscount: (data.sales || []).reduce((sum, s) => sum + Number(s.discountTotal || s.discount || 0), 0),
+    totalPaid: (data.repairs || []).reduce((sum, r) => sum + Number(r.advancePayment || 0) + Number(r.finalPayment || 0), 0),
+    totalDue: (data.repairs || []).reduce((sum, r) => sum + Number(r.balanceDue || 0), 0),
+    paymentBreakdown: {} as Record<string, number>,
+    statusBreakdown: {} as Record<string, number>,
+  };
+  const metrics = { ...defaultMetrics, ...(data.summaryMetrics || {}) };
+
+  const paymentBreakdown = metrics.paymentBreakdown || {};
+  const paymentBreakdownList = Object.entries(paymentBreakdown).filter(([_, amt]) => Number(amt) > 0);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>${escapeHtml(reportTitle)} - ${escapeHtml(reportId)}</title>
+  <script>
+    function triggerPrint() {
+      try {
+        if (typeof window.electronPrint === 'function') {
+          window.electronPrint();
+          return;
+        }
+        if (window.opener && typeof window.opener.electronPrint === 'function') {
+          window.opener.electronPrint();
+          return;
+        }
+        const ipc = window.ipcRenderer || (window.opener && window.opener.ipcRenderer);
+        if (ipc) {
+          ipc.invoke('print_active_report');
+          return;
+        }
+      } catch (e) {
+        console.error('Trigger print error:', e);
+      }
+      window.print();
+    }
+
+    function triggerDownload() {
+      try {
+        const defaultName = "${escapeHtml(reportId)}.pdf";
+        if (typeof window.electronDownload === 'function') {
+          window.electronDownload(defaultName);
+          return;
+        }
+        if (window.opener && typeof window.opener.electronDownload === 'function') {
+          window.opener.electronDownload(defaultName);
+          return;
+        }
+        const ipc = window.ipcRenderer || (window.opener && window.opener.ipcRenderer);
+        if (ipc) {
+          ipc.invoke('download_pdf', { html: document.documentElement.outerHTML, defaultName: defaultName });
+          return;
+        }
+      } catch (e) {
+        console.error('Trigger download error:', e);
+      }
+      window.print();
+    }
+
+    // Auto-trigger print when popup window finishes loading
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        triggerPrint();
+      }, 500);
+    });
+  </script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 8mm 10mm 10mm 10mm;
+    }
+    html, body {
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 11px;
+      line-height: 1.4;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body {
+      padding: 15px 0;
+    }
+    
+    /* Screen Control Bar (Suppressed on Print) */
+    .screen-control-bar {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 10px 20px;
+      max-width: 900px;
+      margin: 0 auto 15px auto;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+    }
+    .print-btn {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 7px 18px;
+      border-radius: 7px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+    .print-btn:hover {
+      background: #1d4ed8;
+    }
+
+    /* Main Framed Document Container (Business Template with Border) */
+    .report-wrapper {
+      max-width: 860px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 2px solid #0f172a;
+      border-radius: 8px;
+      padding: 18px 20px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+      position: relative;
+    }
+
+    /* Outer decorative subtle inner line */
+    .inner-frame {
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 14px 16px;
+    }
+
+    /* Header Row with Brand & Document details */
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #0f172a;
+      margin-bottom: 12px;
+    }
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-logo {
+      height: 52px;
+      max-width: 150px;
+      object-fit: contain;
+      display: block;
+    }
+    .brand-details {
+      display: flex;
+      flex-direction: column;
+    }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 900;
+      color: #0f172a;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      line-height: 1.1;
+    }
+    .brand-address {
+      font-size: 9.5px;
+      color: #475569;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .brand-contact {
+      font-size: 9.5px;
+      color: #1e40af;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    .doc-meta {
+      text-align: right;
+    }
+    .doc-title {
+      font-size: 16px;
+      font-weight: 900;
+      color: #0f172a;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .doc-subtitle {
+      font-size: 9.5px;
+      color: #64748b;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .doc-badge {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 3px 8px;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    /* Filter & Overview Banner */
+    .overview-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      font-size: 10px;
+    }
+    .overview-period {
+      font-weight: 700;
+      color: #1e40af;
+    }
+    .overview-filters {
+      color: #475569;
+      font-weight: 600;
+    }
+
+    /* KPI Summary Cards */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .kpi-card {
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #ffffff;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+    }
+    .kpi-card.highlight {
+      background: #f0fdf4;
+      border-color: #86efac;
+    }
+    .kpi-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #64748b;
+      letter-spacing: 0.3px;
+    }
+    .kpi-val {
+      font-size: 13.5px;
+      font-weight: 900;
+      color: #0f172a;
+      margin-top: 2px;
+    }
+    .kpi-card.highlight .kpi-val {
+      color: #15803d;
+    }
+
+    /* Table Styles (Multi-page safe) */
+    .table-container {
+      width: 100%;
+      margin-bottom: 14px;
+    }
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: auto;
+      font-size: 10px;
+    }
+    table.data-table thead {
+      display: table-header-group;
+    }
+    table.data-table tfoot {
+      display: table-footer-group;
+    }
+    table.data-table tr {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    table.data-table th {
+      background-color: #0f172a;
+      color: #ffffff;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 6px 7px;
+      border: 1px solid #0f172a;
+      font-size: 9.5px;
+    }
+    table.data-table td {
+      border: 1px solid #cbd5e1;
+      padding: 5px 7px;
+      color: #1e293b;
+      vertical-align: middle;
+    }
+    table.data-table tbody tr:nth-child(even) {
+      background-color: #f8fafc;
+    }
+
+    /* Cell Helpers */
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .text-left { text-align: left; }
+    .font-bold { font-weight: 700; }
+    .font-black { font-weight: 900; }
+    .text-muted { color: #64748b; font-size: 8.5px; }
+    .badge {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 8.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-blue { background: #dbeafe; color: #1e40af; }
+    .badge-amber { background: #fef3c7; color: #92400e; }
+    .badge-red { background: #fee2e2; color: #991b1b; }
+
+    /* Summary & Totals Bottom Section */
+    .summary-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-top: 10px;
+      margin-bottom: 14px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .payment-breakdown-box {
+      flex: 1;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 8px 12px;
+      background: #f8fafc;
+      font-size: 9.5px;
+    }
+    .payment-title {
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #0f172a;
+      margin-bottom: 5px;
+      padding-bottom: 3px;
+      border-bottom: 1px dashed #cbd5e1;
+    }
+    .breakdown-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      color: #334155;
+      font-weight: 600;
+    }
+
+    table.totals-table {
+      width: 260px;
+      border-collapse: collapse;
+      border: 1px solid #0f172a;
+      font-size: 10.5px;
+    }
+    table.totals-table td {
+      padding: 4px 8px;
+      border: 1px solid #cbd5e1;
+    }
+    table.totals-table .total-label {
+      font-weight: 700;
+      color: #334155;
+    }
+    table.totals-table .total-val {
+      font-weight: 700;
+      text-align: right;
+      color: #0f172a;
+    }
+    table.totals-table tr.grand-row td {
+      background: #f1f5f9;
+      font-size: 12px;
+      font-weight: 900;
+      color: #0f172a;
+      border-top: 2px solid #0f172a;
+      border-bottom: 2px solid #0f172a;
+    }
+
+    /* Signatures Section */
+    .signatures-row {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 18px;
+      padding-top: 10px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .sig-col {
+      width: 28%;
+      text-align: center;
+    }
+    .sig-space {
+      height: 36px;
+    }
+    .sig-line {
+      border-top: 1px dashed #94a3b8;
+      margin-bottom: 4px;
+    }
+    .sig-title {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+    .sig-sub {
+      font-size: 8px;
+      color: #64748b;
+    }
+
+    /* Report Footer */
+    .report-footer {
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8.5px;
+      color: #64748b;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    @media print {
+      .no-print {
+        display: none !important;
+      }
+      html, body {
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: #ffffff !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .report-wrapper {
+        border: 2px solid #0f172a !important;
+        border-radius: 6px !important;
+        box-shadow: none !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        padding: 10px 12px !important;
+        box-sizing: border-box !important;
+      }
+      .inner-frame {
+        border: 1px solid #94a3b8 !important;
+        padding: 8px 10px !important;
+      }
+      table.data-table th {
+        background-color: #0f172a !important;
+        color: #ffffff !important;
+      }
+      .kpi-card.highlight {
+        background-color: #f0fdf4 !important;
+      }
+      table.totals-table tr.grand-row td {
+        background-color: #f1f5f9 !important;
+      }
+      .summary-section, .signatures-row, .report-footer {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Screen Control Bar (Never Printed) -->
+  <div class="no-print screen-control-bar">
+    <div>
+      <strong>Business Report:</strong> ${escapeHtml(reportTitle)} (${metrics.totalRecords} records)
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button class="print-btn" onclick="triggerPrint()">
+        <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+        </svg>
+        Print / Save as PDF
+      </button>
+      <button class="print-btn" style="background: #059669;" onclick="triggerDownload()">
+        <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+        Download PDF
+      </button>
+    </div>
+  </div>
+
+  <div class="report-wrapper">
+    <div class="inner-frame">
+      <!-- 1. Header Row -->
+      <div class="header-row">
+        <div class="brand-wrap">
+          <img class="brand-logo" src="${HOTLINE_CELLULAR_LOGO_DATA_URL || PHONE_KING_LOGO_DATA_URL || HOTLINE_LOGO_DATA_URL}" alt="${escapeHtml(shopName)}" />
+          <div class="brand-details">
+            <div class="brand-title">${escapeHtml(shopName)}</div>
+            <div class="brand-address">${combinedAddress}</div>
+            <div class="brand-contact">Hotlines: ${escapeHtml(phone)} | Reg No: ${escapeHtml(regNo)}</div>
+            <div class="brand-address" style="font-size: 8.5px; color: #475569;">${escapeHtml(email)}</div>
+          </div>
+        </div>
+        <div class="doc-meta">
+          <div class="doc-title">${escapeHtml(reportTitle)}</div>
+          <div class="doc-subtitle">Official Management & Audit Record</div>
+          <div class="doc-badge">${escapeHtml(reportId)}</div>
+        </div>
+      </div>
+
+      <!-- 2. Overview Strip -->
+      <div class="overview-strip">
+        <div class="overview-period">
+          Period: <span>${escapeHtml(dateRangeStr)}</span>
+        </div>
+        <div class="overview-filters">
+          ${activeFilters.length > 0 ? escapeHtml(activeFilters.join(" | ")) : "All Transactions Included"}
+        </div>
+        <div style="font-weight: 600; color: #334155;">
+          Generated: ${escapeHtml(generatedAtStr)}
+        </div>
+      </div>
+
+      <!-- 3. KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">${isSales ? "Total Invoices" : "Total Repair Jobs"}</div>
+          <div class="kpi-val">${metrics.totalRecords}</div>
+        </div>
+        <div class="kpi-card highlight">
+          <div class="kpi-label">${isSales ? "Total Sales Revenue" : "Total Service Value"}</div>
+          <div class="kpi-val">Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">${isSales ? "Items Sold" : "Paid / Collected"}</div>
+          <div class="kpi-val">${isSales ? metrics.totalItems : `Rs. ${(metrics.totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">${isSales ? "Avg Order Value" : "Pending Balance"}</div>
+          <div class="kpi-val">${isSales ? (metrics.totalRecords > 0 ? `Rs. ${(metrics.totalAmount / metrics.totalRecords).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Rs. 0.00") : `Rs. ${(metrics.totalDue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+        </div>
+      </div>
+
+      <!-- 4. Data Table -->
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            ${isSales ? `
+              <tr>
+                <th style="width: 4%;">#</th>
+                <th style="width: 14%;">Date & Time</th>
+                <th style="width: 13%;">Invoice #</th>
+                <th style="width: 17%;">Customer</th>
+                <th style="width: 27%;">Items & Description</th>
+                <th style="width: 9%;">Method</th>
+                <th style="width: 6%;">Status</th>
+                <th style="width: 10%;" class="text-right">Total (Rs.)</th>
+              </tr>
+            ` : `
+              <tr>
+                <th style="width: 4%;">#</th>
+                <th style="width: 13%;">Date</th>
+                <th style="width: 12%;">Job #</th>
+                <th style="width: 17%;">Customer</th>
+                <th style="width: 26%;">Device & Issue</th>
+                <th style="width: 11%;">Tech</th>
+                <th style="width: 8%;">Status</th>
+                <th style="width: 9%;" class="text-right">Amount (Rs.)</th>
+              </tr>
+            `}
+          </thead>
+          <tbody>
+            ${isSales ? (
+              (data.sales || []).length === 0 ? `
+                <tr>
+                  <td colspan="8" class="text-center" style="padding: 20px; color: #64748b; font-weight: 600;">
+                    No sales match the specified filter criteria.
+                  </td>
+                </tr>
+              ` : (data.sales || []).map((sale, idx) => {
+                const sNum = sale.saleNumber || ("#" + String(sale._id || idx + 1).slice(-6));
+                const sDate = sale.createdAt ? new Date(sale.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(sale.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }) : "-";
+                const cName = sale.customer?.name || sale.client?.name || "Walk-in";
+                const cPhone = sale.customer?.phone || sale.client?.phone || "";
+                const itemsList = Array.isArray(sale.items) ? sale.items : [];
+                const itemsDesc = itemsList.map((it: any) => {
+                  const pName = it.productName || it.product?.name || "Item";
+                  const qty = it.quantity || 1;
+                  const varName = it.variantSnapshot?.display || (it.variant?.attributes ? it.variant.attributes.map((a: any) => a.value || a).join(", ") : "");
+                  const serial = it.serialNumber || it.imei1 || "";
+                  return `${escapeHtml(pName)} ${varName ? `(${escapeHtml(varName)})` : ""} &times; ${qty}${serial ? ` [${escapeHtml(serial)}]` : ""}`;
+                }).join("<br/>");
+
+                const method = sale.paymentMethod || (Array.isArray(sale.payments) && sale.payments[0]?.method) || "CASH";
+                const status = sale.status || "COMPLETED";
+                const total = Number(sale.grandTotal !== undefined ? sale.grandTotal : (sale.total || 0));
+
+                return `
+                  <tr>
+                    <td class="text-center font-bold">${idx + 1}</td>
+                    <td>${sDate}</td>
+                    <td class="font-bold">${escapeHtml(sNum)}</td>
+                    <td>
+                      <div class="font-bold">${escapeHtml(cName)}</div>
+                      ${cPhone ? `<div class="text-muted">${escapeHtml(cPhone)}</div>` : ""}
+                    </td>
+                    <td style="font-size: 9px; line-height: 1.3;">${itemsDesc || "Standard item sale"}</td>
+                    <td class="font-bold" style="text-transform: uppercase;">${escapeHtml(String(method))}</td>
+                    <td class="text-center">
+                      <span class="badge ${status === "COMPLETED" ? "badge-green" : status === "CANCELLED" || status === "VOIDED" ? "badge-red" : "badge-blue"}">${escapeHtml(status)}</span>
+                    </td>
+                    <td class="text-right font-black">${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                `;
+              }).join("")
+            ) : (
+              (data.repairs || []).length === 0 ? `
+                <tr>
+                  <td colspan="8" class="text-center" style="padding: 20px; color: #64748b; font-weight: 600;">
+                    No repair jobs match the specified filter criteria.
+                  </td>
+                </tr>
+              ` : (data.repairs || []).map((repair, idx) => {
+                const jNum = repair.jobNumber || ("#" + String(repair._id || idx + 1).slice(-6));
+                const rDate = repair.createdAt ? new Date(repair.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "-";
+                const cName = repair.customer?.name || "Customer";
+                const cPhone = repair.customer?.phone || "";
+                const devBrand = repair.device?.brand || "";
+                const devModel = repair.device?.model || "";
+                const issue = repair.problemDescription || "Service";
+                const tech = repair.assignedTo?.username || repair.assignedTo?.name || "Unassigned";
+                const status = repair.status || "PENDING";
+                const total = Number(repair.totalCost || repair.serviceCost || repair.estimatedCost || 0);
+
+                return `
+                  <tr>
+                    <td class="text-center font-bold">${idx + 1}</td>
+                    <td>${rDate}</td>
+                    <td class="font-bold">${escapeHtml(jNum)}</td>
+                    <td>
+                      <div class="font-bold">${escapeHtml(cName)}</div>
+                      ${cPhone ? `<div class="text-muted">${escapeHtml(cPhone)}</div>` : ""}
+                    </td>
+                    <td>
+                      <div class="font-bold">${escapeHtml(`${devBrand} ${devModel}`.trim() || "Device")}</div>
+                      <div class="text-muted">${escapeHtml(issue)}</div>
+                    </td>
+                    <td>${escapeHtml(tech)}</td>
+                    <td class="text-center">
+                      <span class="badge ${status === "COMPLETED" || status === "DELIVERED" ? "badge-green" : status === "IN_PROGRESS" ? "badge-blue" : status === "PENDING" ? "badge-amber" : "badge-red"}">${escapeHtml(status)}</span>
+                    </td>
+                    <td class="text-right font-black">${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                `;
+              }).join("")
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 5. Totals & Payment Summary -->
+      <div class="summary-section">
+        <div class="payment-breakdown-box">
+          <div class="payment-title">${isSales ? "Payment Method Breakdown" : "Repairs Financial Summary"}</div>
+          ${isSales ? (
+            paymentBreakdownList.length > 0 ? paymentBreakdownList.map(([meth, amt]) => `
+              <div class="breakdown-row">
+                <span>${escapeHtml(meth)}:</span>
+                <span>Rs. ${Number(amt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            `).join("") : `
+              <div class="breakdown-row">
+                <span>Direct Cash / POS:</span>
+                <span>Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            `
+          ) : `
+            <div class="breakdown-row">
+              <span>Advance Collected:</span>
+              <span>Rs. ${(metrics.totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div class="breakdown-row">
+              <span>Balance Due / Pending:</span>
+              <span>Rs. ${(metrics.totalDue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          `}
+          <div class="breakdown-row" style="border-top: 1px dashed #cbd5e1; margin-top: 4px; padding-top: 4px; font-weight: 800; color: #0f172a;">
+            <span>Total Records Count:</span>
+            <span>${metrics.totalRecords} entries</span>
+          </div>
+        </div>
+
+        <table class="totals-table">
+          <tr>
+            <td class="total-label">Subtotal Value:</td>
+            <td class="total-val">Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>
+          ${metrics.totalDiscount && metrics.totalDiscount > 0 ? `
+          <tr>
+            <td class="total-label">Discounts Allowed:</td>
+            <td class="total-val" style="color: #dc2626;">- Rs. ${metrics.totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>` : ""}
+          <tr class="grand-row">
+            <td class="total-label" style="font-weight: 900;">NET TOTAL:</td>
+            <td class="total-val" style="font-weight: 900;">Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- 6. Signatures Row -->
+      <div class="signatures-row">
+        <div class="sig-col">
+          <div class="sig-space"></div>
+          <div class="sig-line"></div>
+          <div class="sig-title">Prepared By: ${escapeHtml(cashierName)}</div>
+          <div class="sig-sub">Cashier / Staff Signature</div>
+        </div>
+        <div class="sig-col">
+          <div class="sig-space"></div>
+          <div class="sig-line"></div>
+          <div class="sig-title">Verified & Audited By</div>
+          <div class="sig-sub">Store Manager Signature</div>
+        </div>
+        <div class="sig-col">
+          <div class="sig-space"></div>
+          <div class="sig-line"></div>
+          <div class="sig-title">Official Stamp / Seal</div>
+          <div class="sig-sub">Hotline Cellular Homagama / Padukka</div>
+        </div>
+      </div>
+
+      <!-- 7. Footer -->
+      <div class="report-footer">
+        <div>Hotline Cellular POS System &bull; Confidential Business Document</div>
+        <div>Generated on ${escapeHtml(generatedAtStr)} &bull; Page 1 of 1</div>
+        <div>&copy; Powered by Lumisolutionz</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 /**
  * Open print window and trigger print
  */
 export function printDocument(html: string, title?: string, type: "bill" | "invoice" = "bill"): Window | null {
   const isInvoice = type === "invoice";
-  const width = isInvoice ? 850 : 360;
-  const height = isInvoice ? 1050 : 700;
+  const width = isInvoice ? 880 : 380;
+  const height = isInvoice ? 1050 : 720;
 
   const printWindow = window.open("", "_blank", `width=${width},height=${height},scrollbars=yes`);
   if (printWindow) {
+    // Expose print and download triggers from parent window
+    (printWindow as any).electronPrint = () => {
+      if (typeof window !== "undefined" && (window as any).ipcRenderer) {
+        (window as any).ipcRenderer.invoke('print_active_report');
+      } else {
+        try {
+          printWindow.focus();
+          printWindow.print();
+        } catch (e) {}
+      }
+    };
+
+    (printWindow as any).electronDownload = (name?: string) => {
+      const fileName = name || `${title || 'Document'}.pdf`;
+      if (typeof window !== "undefined" && (window as any).ipcRenderer) {
+        (window as any).ipcRenderer.invoke('download_pdf', {
+          html: printWindow.document.documentElement.outerHTML,
+          defaultName: fileName,
+        });
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      (window as any).electronPrint = (printWindow as any).electronPrint;
+      (window as any).electronDownload = (printWindow as any).electronDownload;
+    }
+
     printWindow.document.write(html);
     if (title) {
       printWindow.document.title = title;
     }
     printWindow.document.close();
-    setTimeout(() => {
-      printWindow.focus();
-      printWindow.print();
-    }, 300);
+
+    const doPrint = () => {
+      try {
+        if (typeof window !== "undefined" && (window as any).ipcRenderer) {
+          (window as any).ipcRenderer.invoke('print_active_report');
+        } else {
+          printWindow.focus();
+          printWindow.print();
+        }
+      } catch (err) {
+        console.warn("printWindow.print() error:", err);
+      }
+    };
+
+    if (printWindow.document.readyState === "complete") {
+      setTimeout(doPrint, 350);
+    } else {
+      printWindow.onload = () => setTimeout(doPrint, 300);
+      setTimeout(doPrint, 600);
+    }
   }
   return printWindow;
 }
+
+/**
+ * Download report as a real PDF in Electron or HTML document in browser
+ */
+export async function downloadPdfDocument(html: string, defaultName: string): Promise<void> {
+  if (typeof window !== "undefined" && (window as any).ipcRenderer) {
+    try {
+      const res = await (window as any).ipcRenderer.invoke("download_pdf", { html, defaultName });
+      if (res?.success) return;
+      if (res?.canceled) return;
+    } catch (err) {
+      console.warn("Electron download_pdf error, fallback to HTML file:", err);
+    }
+  }
+
+  // Fallback: download standalone HTML report with embedded print script
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = defaultName.replace(/\.pdf$/i, "") + ".html";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+
