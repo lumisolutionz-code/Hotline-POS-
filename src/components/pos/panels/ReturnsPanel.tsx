@@ -11,6 +11,7 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
     [key: string]: { selected: boolean; quantity: number; condition: string; destination: string };
   }>({});
   const [reason, setReason] = useState<string>("CHANGED_MIND");
+  const [returnStatus, setReturnStatus] = useState<"PARTIAL_RETURN" | "FULL_RETURN">("PARTIAL_RETURN");
   const [resolution, setResolution] = useState<"REFUND" | "EXCHANGE">("REFUND");
   const [loading, setLoading] = useState<boolean>(false);
   const [searchLoading, setSearchLoading] = useState<boolean>(false);
@@ -87,10 +88,17 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
   };
 
   const toggleItem = (itemId: string) => {
-    setSelectedItems((prev) => ({
-      ...prev,
-      [itemId]: { ...prev[itemId], selected: !prev[itemId]?.selected },
-    }));
+    setSelectedItems((prev) => {
+      const updated = {
+        ...prev,
+        [itemId]: { ...prev[itemId], selected: !prev[itemId]?.selected },
+      };
+      if (sale?.items?.length) {
+        const allSelected = sale.items.every((it: any) => updated[it._id]?.selected);
+        setReturnStatus(allSelected ? "FULL_RETURN" : "PARTIAL_RETURN");
+      }
+      return updated;
+    });
   };
 
   const updateItemReturnData = (itemId: string, field: string, value: any) => {
@@ -168,6 +176,7 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
       const payload = {
         originalSaleId: sale._id,
         returnType: resolution,
+        returnStatus,
         items: itemsToReturn,
         reason,
         refundMethod: "CASH",
@@ -375,19 +384,32 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
                   })}
                 </div>
 
-                <div>
-                  <label className="text-sm font-semibold text-slate-600 uppercase block mb-2 dark:text-slate-400">Return Reason</label>
-                  <select
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-white border border-sky-300 rounded-xl text-slate-800 shadow-sm focus:border-sky-500 font-medium"
-                  >
-                    <option value="DEFECTIVE" className="bg-white text-slate-800">Defective Product</option>
-                    <option value="WRONG_ITEM" className="bg-white text-slate-800">Wrong Item</option>
-                    <option value="CHANGED_MIND" className="bg-white text-slate-800">Customer Changed Mind</option>
-                    <option value="NOT_AS_DESCRIBED" className="bg-white text-slate-800">Not as Described</option>
-                    <option value="OTHER" className="bg-white text-slate-800">Other</option>
-                  </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 uppercase block mb-1.5 dark:text-slate-400">Return Status</label>
+                    <select
+                      value={returnStatus}
+                      onChange={(e) => setReturnStatus(e.target.value as "PARTIAL_RETURN" | "FULL_RETURN")}
+                      className="w-full px-3.5 py-2.5 bg-white border border-sky-300 rounded-xl text-slate-800 shadow-sm focus:border-sky-500 font-medium text-sm"
+                    >
+                      <option value="PARTIAL_RETURN" className="bg-white text-slate-800">Partial Return</option>
+                      <option value="FULL_RETURN" className="bg-white text-slate-800">Full Return</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 uppercase block mb-1.5 dark:text-slate-400">Return Reason</label>
+                    <select
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-white border border-sky-300 rounded-xl text-slate-800 shadow-sm focus:border-sky-500 font-medium text-sm"
+                    >
+                      <option value="DEFECTIVE" className="bg-white text-slate-800">Defective Product</option>
+                      <option value="WRONG_ITEM" className="bg-white text-slate-800">Wrong Item</option>
+                      <option value="CHANGED_MIND" className="bg-white text-slate-800">Customer Changed Mind</option>
+                      <option value="NOT_AS_DESCRIBED" className="bg-white text-slate-800">Not as Described</option>
+                      <option value="OTHER" className="bg-white text-slate-800">Other</option>
+                    </select>
+                  </div>
                 </div>
               </>
             )}

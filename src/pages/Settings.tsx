@@ -91,7 +91,7 @@ export default function Settings(): JSX.Element {
   const [dbStats, setDbStats] = useState<{ databaseName?: string; collectionsCount?: number; totalDocuments?: number } | null>(null);
 
   // Auto-Updater State
-  const [appVersion, setAppVersion] = useState<string>("1.2.1");
+  const [appVersion, setAppVersion] = useState<string>("1.2.2");
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
   const [githubToken, setGithubToken] = useState<string>("");
   const [tokenSaved, setTokenSaved] = useState<boolean>(false);

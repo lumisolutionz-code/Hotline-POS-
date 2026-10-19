@@ -11,6 +11,7 @@ export interface Category {
 
 export interface ProductVariant {
   _id: string;
+  name?: string;
   product?: string;
   itemCode?: string;
   attributes: Record<string, string> | any[];

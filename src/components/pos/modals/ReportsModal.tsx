@@ -12,6 +12,13 @@ import {
   Receipt,
   Download,
   Loader2,
+  ArrowDownRight,
+  ArrowUpRight,
+  ArrowLeftRight,
+  Layers,
+  ListFilter,
+  Check,
+  Coins,
 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { getShopSettings } from "../../../lib/settings";
@@ -23,6 +30,29 @@ import {
   BusinessReportData,
 } from "../../../lib/invoiceGenerator";
 import type { Category, Product, RepairJob } from "../../../types/pos";
+
+export interface ReportExpense {
+  _id: string;
+  expenseNo?: string;
+  description: string;
+  amount: number;
+  toWhom?: string;
+  status: string;
+  createdAt: string;
+  createdBy?: { _id: string; username: string };
+}
+
+export interface ReportNote {
+  _id: string;
+  noteNo?: string;
+  description: string;
+  amount: number;
+  toWhom?: string;
+  type: "+" | "-";
+  status: string;
+  createdAt: string;
+  createdBy?: { _id: string; username: string };
+}
 
 export interface ReportsModalProps {
   isOpen: boolean;
@@ -47,10 +77,19 @@ export function ReportsModal({
   // Raw data from server
   const [salesList, setSalesList] = useState<any[]>([]);
   const [repairsList, setRepairsList] = useState<RepairJob[]>([]);
+  const [expensesList, setExpensesList] = useState<ReportExpense[]>([]);
+  const [notesList, setNotesList] = useState<ReportNote[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+
+  // Financial Adjustments State (Cash In / Cash Out)
+  const includeExpenses = false;
+  const [includeCashIn, setIncludeCashIn] = useState<boolean>(true);
+  const [includeCashOut, setIncludeCashOut] = useState<boolean>(true);
+  const [viewMode, setViewMode] = useState<"summary" | "detailed">("summary");
+  const [activeSubView, setActiveSubView] = useState<"sales" | "expenses" | "cash_in_out" | "all">("sales");
 
   // Filters State
   const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "last7" | "thisMonth" | "all" | "custom">("today");
@@ -105,22 +144,33 @@ export function ReportsModal({
     setLoading(true);
     setErrorMsg("");
     try {
-      // 1. Fetch Sales (supports wide limit)
+      // 1. Fetch Sales, Expenses, and Notes for the date range
       let salesQuery = "/sales?limit=3000";
+      let expQuery = "/expenses?limit=1500";
+      let notesQuery = "/notes?limit=1500";
+
       if (startDate) {
         const s = new Date(startDate);
         s.setHours(0, 0, 0, 0);
-        salesQuery += `&startDate=${encodeURIComponent(s.toISOString())}`;
+        const sIso = s.toISOString();
+        salesQuery += `&startDate=${encodeURIComponent(sIso)}`;
+        expQuery += `&startDate=${encodeURIComponent(sIso)}`;
+        notesQuery += `&startDate=${encodeURIComponent(sIso)}`;
       }
       if (endDate) {
         const e = new Date(endDate);
         e.setHours(23, 59, 59, 999);
-        salesQuery += `&endDate=${encodeURIComponent(e.toISOString())}`;
+        const eIso = e.toISOString();
+        salesQuery += `&endDate=${encodeURIComponent(eIso)}`;
+        expQuery += `&endDate=${encodeURIComponent(eIso)}`;
+        notesQuery += `&endDate=${encodeURIComponent(eIso)}`;
       }
 
-      const [salesRes, repairsRes] = await Promise.all([
+      const [salesRes, repairsRes, expRes, notesRes] = await Promise.all([
         api<any>(salesQuery),
         api<any>("/repairs?limit=1500"),
+        api<any>(expQuery).catch(() => ({ status: "error", data: { expenses: [] } })),
+        api<any>(notesQuery).catch(() => ({ status: "error", data: { notes: [] } })),
       ]);
 
       if (salesRes.status === "success" && Array.isArray(salesRes.data?.sales)) {
@@ -133,6 +183,18 @@ export function ReportsModal({
         setRepairsList(repairsRes.data.repairs);
       } else {
         setRepairsList([]);
+      }
+
+      if (expRes.status === "success" && Array.isArray(expRes.data?.expenses)) {
+        setExpensesList(expRes.data.expenses);
+      } else {
+        setExpensesList([]);
+      }
+
+      if (notesRes.status === "success" && Array.isArray(notesRes.data?.notes)) {
+        setNotesList(notesRes.data.notes);
+      } else {
+        setNotesList([]);
       }
     } catch (err: any) {
       console.error("Failed to fetch reports data:", err);
@@ -177,11 +239,20 @@ export function ReportsModal({
     setSelectedPaymentMethod("all");
     setSelectedStatus("all");
     setSearchQuery("");
+    setIncludeCashIn(true);
+    setIncludeCashOut(true);
+    setViewMode("summary");
+    setActiveSubView("sales");
   };
 
-  // Filtered Sales Calculation
+  // Filtered Sales Calculation (Voided and cancelled sales are strictly excluded from business reports)
   const filteredSales = useMemo(() => {
     return salesList.filter((sale) => {
+      const st = (sale.status || "").toUpperCase();
+      if (st === "VOID" || st === "VOIDED" || st === "CANCELLED") {
+        return false;
+      }
+
       // 1. Status Filter
       if (selectedStatus !== "all") {
         if (sale.status !== selectedStatus) return false;
@@ -359,6 +430,80 @@ export function ReportsModal({
     };
   }, [filteredRepairs]);
 
+  // Filtered Expenses Calculation
+  const filteredExpenses = useMemo(() => {
+    return expensesList.filter((exp) => {
+      if (exp.status === "CANCELLED") return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          (exp.description || "").toLowerCase().includes(q) ||
+          (exp.toWhom || "").toLowerCase().includes(q) ||
+          (exp.expenseNo || "").toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [expensesList, searchQuery]);
+
+  // Filtered Notes (Cash In / Out) Calculation
+  const filteredNotes = useMemo(() => {
+    return notesList.filter((nt) => {
+      if (nt.status === "CANCELLED") return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          (nt.description || "").toLowerCase().includes(q) ||
+          (nt.toWhom || "").toLowerCase().includes(q) ||
+          (nt.noteNo || "").toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [notesList, searchQuery]);
+
+  // Financial Adjustment Totals
+  const expenseTotal = useMemo(() => {
+    return filteredExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  }, [filteredExpenses]);
+
+  const cashInTotal = useMemo(() => {
+    return filteredNotes
+      .filter((n) => n.type === "+")
+      .reduce((sum, n) => sum + Number(n.amount || 0), 0);
+  }, [filteredNotes]);
+
+  const cashOutTotal = useMemo(() => {
+    return filteredNotes
+      .filter((n) => n.type === "-")
+      .reduce((sum, n) => sum + Number(n.amount || 0), 0);
+  }, [filteredNotes]);
+
+  const netCashFlow = cashInTotal - cashOutTotal;
+  const cashInCount = useMemo(() => filteredNotes.filter((n) => n.type === "+").length, [filteredNotes]);
+  const cashOutCount = useMemo(() => filteredNotes.filter((n) => n.type === "-").length, [filteredNotes]);
+  const visibleNotes = useMemo(() => {
+    return filteredNotes.filter((nt) => {
+      if (includeCashIn && nt.type === "+") return true;
+      if (includeCashOut && nt.type === "-") return true;
+      return false;
+    });
+  }, [filteredNotes, includeCashIn, includeCashOut]);
+
+  // Net Revenue Calculation:
+  // When Cash In is selected -> add cash in (+)
+  // When Cash Out is selected -> deduct cash out (-)
+  const netRevenue = useMemo(() => {
+    let net = salesMetrics.totalAmount;
+    if (includeCashIn) {
+      net += cashInTotal;
+    }
+    if (includeCashOut) {
+      net -= cashOutTotal;
+    }
+    return net;
+  }, [salesMetrics.totalAmount, includeCashIn, includeCashOut, cashInTotal, cashOutTotal]);
+
   // Trigger Print A4 Business Report
   const handlePrintBusinessReport = async () => {
     if (isPrinting || isDownloading) return;
@@ -385,7 +530,25 @@ export function ReportsModal({
         },
         sales: filteredSales,
         repairs: filteredRepairs,
-        summaryMetrics: activeTab === "repairs" ? repairsMetrics : salesMetrics,
+        includeExpenses: activeTab === "sales" ? includeExpenses : false,
+        includeCashIn: activeTab === "sales" ? includeCashIn : false,
+        includeCashOut: activeTab === "sales" ? includeCashOut : false,
+        includeCashInOut: activeTab === "sales" ? (includeCashIn || includeCashOut) : false,
+        viewMode: viewMode,
+        expenses: filteredExpenses,
+        notes: visibleNotes,
+        expenseTotal: expenseTotal,
+        cashInTotal: cashInTotal,
+        cashOutTotal: cashOutTotal,
+        netRevenue: netRevenue,
+        summaryMetrics: activeTab === "repairs" ? repairsMetrics : {
+          ...salesMetrics,
+          grossSalesRevenue: salesMetrics.totalAmount,
+          totalExpenses: expenseTotal,
+          totalCashIn: cashInTotal,
+          totalCashOut: cashOutTotal,
+          netRevenue: netRevenue,
+        },
         user: currentUser,
         shopSettings,
       };
@@ -425,7 +588,25 @@ export function ReportsModal({
         },
         sales: filteredSales,
         repairs: filteredRepairs,
-        summaryMetrics: activeTab === "repairs" ? repairsMetrics : salesMetrics,
+        includeExpenses: activeTab === "sales" ? includeExpenses : false,
+        includeCashIn: activeTab === "sales" ? includeCashIn : false,
+        includeCashOut: activeTab === "sales" ? includeCashOut : false,
+        includeCashInOut: activeTab === "sales" ? (includeCashIn || includeCashOut) : false,
+        viewMode: viewMode,
+        expenses: filteredExpenses,
+        notes: visibleNotes,
+        expenseTotal: expenseTotal,
+        cashInTotal: cashInTotal,
+        cashOutTotal: cashOutTotal,
+        netRevenue: netRevenue,
+        summaryMetrics: activeTab === "repairs" ? repairsMetrics : {
+          ...salesMetrics,
+          grossSalesRevenue: salesMetrics.totalAmount,
+          totalExpenses: expenseTotal,
+          totalCashIn: cashInTotal,
+          totalCashOut: cashOutTotal,
+          netRevenue: netRevenue,
+        },
         user: currentUser,
         shopSettings,
       };
@@ -454,7 +635,17 @@ export function ReportsModal({
     const eDate = endDate ? new Date(endDate) : new Date();
     eDate.setHours(23, 59, 59, 999);
 
-    const html = generateDailySalesReportHtml(filteredSales, sDate, eDate, shopSettings, currentUser);
+    const html = generateDailySalesReportHtml(filteredSales, sDate, eDate, shopSettings, currentUser, {
+      includeExpenses: includeExpenses,
+      includeCashInOut: includeCashIn || includeCashOut,
+      viewMode: viewMode,
+      expenses: filteredExpenses,
+      notes: visibleNotes,
+      expenseTotal: expenseTotal,
+      cashInTotal: cashInTotal,
+      cashOutTotal: cashOutTotal,
+      netRevenue: netRevenue,
+    });
     printDocument(html, `Daily-Sales-Thermal-${sDate.toISOString().slice(0, 10)}`, "bill");
   };
 
@@ -740,6 +931,102 @@ export function ReportsModal({
           </div>
         </div>
 
+        {/* Financial Adjustments Bar: Cash In / Cash Out Toggle Button + View Mode Selector */}
+        {activeTab === "sales" && (
+          <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mr-1 flex items-center gap-1.5">
+                <Coins className="w-3.5 h-3.5 text-blue-600" />
+                Financial Adjustments:
+              </span>
+
+              {/* CASH IN BUTTON (Default Selected) */}
+              <button
+                type="button"
+                onClick={() => setIncludeCashIn((prev) => !prev)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                  includeCashIn
+                    ? "bg-emerald-50 text-emerald-900 border-emerald-300 shadow-2xs ring-1 ring-emerald-400/40"
+                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                title="Add total cash in (+) to revenue"
+              >
+                <ArrowUpRight className={`w-3.5 h-3.5 ${includeCashIn ? "text-emerald-600" : "text-slate-400"}`} />
+                <span>Cash In</span>
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                    includeCashIn
+                      ? "bg-emerald-600 text-white"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  + Rs. {cashInTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                {includeCashIn && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+              </button>
+
+              {/* CASH OUT BUTTON (Default Selected) */}
+              <button
+                type="button"
+                onClick={() => setIncludeCashOut((prev) => !prev)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                  includeCashOut
+                    ? "bg-rose-50 text-rose-900 border-rose-300 shadow-2xs ring-1 ring-rose-400/40"
+                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                title="Deduct total cash out (-) from revenue"
+              >
+                <ArrowDownRight className={`w-3.5 h-3.5 ${includeCashOut ? "text-rose-600" : "text-slate-400"}`} />
+                <span>Cash Out</span>
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                    includeCashOut
+                      ? "bg-rose-600 text-white"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  - Rs. {cashOutTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                {includeCashOut && <Check className="w-3.5 h-3.5 text-rose-600 stroke-[3]" />}
+              </button>
+            </div>
+
+            {/* TWO OPTIONS: Summary (Totals Only) vs Itemized (One-by-One with Values) */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Report Mode:</span>
+              <div className="flex items-center bg-white p-0.5 rounded-lg border border-slate-200 text-xs shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("summary")}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-bold cursor-pointer transition-all ${
+                    viewMode === "summary"
+                      ? "bg-blue-600 text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                  title="Totals Only: Show total cash in and cash out lump sum amounts without listing each entry"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Totals Only</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setViewMode("detailed")}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-bold cursor-pointer transition-all ${
+                    viewMode === "detailed"
+                      ? "bg-blue-600 text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                  title="Itemized: Show each cash movement one by one with dates, descriptions, and values"
+                >
+                  <ListFilter className="w-3.5 h-3.5" />
+                  <span>Itemized (One-by-One)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 4. Live Filter KPI Cards */}
         <div className="px-5 py-2.5 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center gap-3 shrink-0">
           {activeTab === "sales" ? (
@@ -754,17 +1041,76 @@ export function ReportsModal({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50/60 border border-emerald-200 rounded-xl shadow-2xs">
-                <div className="w-6 h-6 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl shadow-2xs border ${
+                includeCashIn || includeCashOut
+                  ? "bg-white border-slate-200"
+                  : "bg-emerald-50/60 border-emerald-200"
+              }`}>
+                <div className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-xs ${
+                  includeCashIn || includeCashOut ? "bg-slate-100 text-slate-700" : "bg-emerald-100 text-emerald-700"
+                }`}>
                   Rs
                 </div>
                 <div>
-                  <div className="text-[10px] text-emerald-600 uppercase font-bold">Total Revenue</div>
-                  <div className="text-xs font-black text-emerald-800">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold">
+                    {includeCashIn || includeCashOut ? "Gross Sales" : "Total Revenue"}
+                  </div>
+                  <div className="text-xs font-black text-slate-800">
                     Rs. {salesMetrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
               </div>
+
+              {/* Cash In KPI Card */}
+              {includeCashIn && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50/70 border border-emerald-200 rounded-xl shadow-2xs">
+                  <div className="w-6 h-6 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-emerald-700 uppercase font-bold flex items-center gap-1">
+                      <span>Cash In</span>
+                      <span className="text-[9px] px-1 bg-emerald-200 text-emerald-900 rounded font-black">{cashInCount}</span>
+                    </div>
+                    <div className="text-xs font-black text-emerald-900">
+                      + Rs. {cashInTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Cash Out KPI Card */}
+              {includeCashOut && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-rose-50/70 border border-rose-200 rounded-xl shadow-2xs">
+                  <div className="w-6 h-6 rounded-md bg-rose-100 text-rose-700 flex items-center justify-center font-bold text-xs">
+                    <ArrowDownRight className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-rose-700 uppercase font-bold flex items-center gap-1">
+                      <span>Cash Out</span>
+                      <span className="text-[9px] px-1 bg-rose-200 text-rose-900 rounded font-black">{cashOutCount}</span>
+                    </div>
+                    <div className="text-xs font-black text-rose-900">
+                      - Rs. {cashOutTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Adjusted Net Revenue KPI Card */}
+              {(includeCashIn || includeCashOut) && (
+                <div className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-xl shadow-sm border border-emerald-500">
+                  <div className="w-6 h-6 rounded-md bg-white/20 text-white flex items-center justify-center font-bold text-xs">
+                    Rs
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-emerald-100 uppercase font-extrabold tracking-wide">Final Net Revenue</div>
+                    <div className="text-sm font-black text-white">
+                      Rs. {netRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-xl shadow-2xs">
                 <div className="w-6 h-6 rounded-md bg-amber-50 text-amber-600 flex items-center justify-center font-bold text-xs">
@@ -849,87 +1195,384 @@ export function ReportsModal({
               <span>{errorMsg}</span>
             </div>
           ) : activeTab === "sales" ? (
-            filteredSales.length === 0 ? (
-              <div className="py-16 text-center text-slate-400 text-xs">
-                <FileText className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                <p className="font-bold text-slate-600">No sales match current filters</p>
-                <p className="text-[11px] mt-1">Try expanding the date range, clearing the category, or resetting filters.</p>
-              </div>
-            ) : (
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#0f172a] text-white text-[11px] uppercase tracking-wider font-bold">
-                    <tr>
-                      <th className="py-2.5 px-3 w-10 text-center">#</th>
-                      <th className="py-2.5 px-3">Date & Time</th>
-                      <th className="py-2.5 px-3">Invoice #</th>
-                      <th className="py-2.5 px-3">Customer</th>
-                      <th className="py-2.5 px-3">Items Sold</th>
-                      <th className="py-2.5 px-3">Method</th>
-                      <th className="py-2.5 px-3 text-center">Status</th>
-                      <th className="py-2.5 px-3 text-right">Total (Rs.)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {filteredSales.map((sale, idx) => {
-                      const sNum = sale.saleNumber || ("#" + String(sale._id || idx + 1).slice(-6));
-                      const sDate = sale.createdAt
-                        ? new Date(sale.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) + " " +
-                          new Date(sale.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
-                        : "-";
-                      const cName = sale.customer?.name || sale.client?.name || "Walk-in";
-                      const cPhone = sale.customer?.phone || sale.client?.phone || "";
-                      const method = (sale.paymentMethod || (Array.isArray(sale.payments) && sale.payments[0]?.method) || "CASH").toUpperCase();
-                      const status = sale.status || "COMPLETED";
-                      const total = Number(sale.grandTotal !== undefined ? sale.grandTotal : (sale.total || 0));
+            <div className="space-y-4">
+              {/* Detailed Sub-View Navigation Tabs */}
+              {viewMode === "detailed" && (includeExpenses || includeCashIn || includeCashOut) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-1.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveSubView("sales")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        activeSubView === "sales"
+                          ? "bg-blue-600 text-white shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                      }`}
+                    >
+                      <ShoppingBag className="w-3.5 h-3.5" />
+                      <span>Sales Invoices</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeSubView === "sales" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>
+                        {filteredSales.length}
+                      </span>
+                    </button>
 
-                      const itemsList = Array.isArray(sale.items) ? sale.items : [];
+                    {includeExpenses && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubView("expenses")}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          activeSubView === "expenses"
+                            ? "bg-rose-600 text-white shadow-2xs"
+                            : "text-rose-700 hover:text-rose-900 hover:bg-rose-50"
+                        }`}
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Itemized Expenses</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeSubView === "expenses" ? "bg-white/20 text-white" : "bg-rose-100 text-rose-800"}`}>
+                          {filteredExpenses.length} (-Rs. {expenseTotal.toLocaleString()})
+                        </span>
+                      </button>
+                    )}
 
-                      return (
-                        <tr key={sale._id || idx} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-2.5 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
-                          <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{sDate}</td>
-                          <td className="py-2.5 px-3 font-extrabold text-blue-600">{sNum}</td>
-                          <td className="py-2.5 px-3">
-                            <div className="font-bold text-slate-800">{cName}</div>
-                            {cPhone && <div className="text-[10px] text-slate-400">{cPhone}</div>}
-                          </td>
-                          <td className="py-2.5 px-3 text-[11px] max-w-xs">
-                            <div className="line-clamp-2">
-                              {itemsList.map((it: any, iIdx: number) => (
-                                <span key={iIdx} className="inline-block mr-1.5">
-                                  {it.productName || it.product?.name || "Item"} &times; {it.quantity || 1}
-                                  {iIdx < itemsList.length - 1 ? "," : ""}
+                    {(includeCashIn || includeCashOut) && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubView("cash_in_out")}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          activeSubView === "cash_in_out"
+                            ? "bg-emerald-600 text-white shadow-2xs"
+                            : "text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50"
+                        }`}
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5" />
+                        <span>Itemized Cash Movements</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeSubView === "cash_in_out" ? "bg-white/20 text-white" : "bg-emerald-100 text-emerald-800"}`}>
+                          {visibleNotes.length} ({netCashFlow >= 0 ? "+" : "-"}Rs. {Math.abs(netCashFlow).toLocaleString()})
+                        </span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveSubView("all")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        activeSubView === "all"
+                          ? "bg-indigo-600 text-white shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>All Tables Stacked</span>
+                    </button>
+                  </div>
+
+                  <span className="text-[11px] text-slate-500 font-semibold px-2">
+                    Viewing itemized values one by one
+                  </span>
+                </div>
+              )}
+
+              {/* TABLE 1: Sales Invoices Table */}
+              {(activeSubView === "sales" || activeSubView === "all" || viewMode === "summary") && (
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                  {activeSubView === "all" && (
+                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                      <span className="text-xs font-extrabold uppercase text-slate-700 flex items-center gap-1.5">
+                        <ShoppingBag className="w-3.5 h-3.5 text-blue-600" />
+                        Sales Invoices ({filteredSales.length})
+                      </span>
+                      <span className="text-xs font-black text-slate-900">
+                        Total: Rs. {salesMetrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  )}
+
+                  {filteredSales.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 text-xs">
+                      <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                      <p className="font-bold text-slate-600">No sales match current filters</p>
+                      <p className="text-[11px] mt-1">Try expanding the date range or resetting filters.</p>
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#0f172a] text-white text-[11px] uppercase tracking-wider font-bold">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10 text-center">#</th>
+                          <th className="py-2.5 px-3">Date & Time</th>
+                          <th className="py-2.5 px-3">Invoice #</th>
+                          <th className="py-2.5 px-3">Customer</th>
+                          <th className="py-2.5 px-3">Items Sold</th>
+                          <th className="py-2.5 px-3">Method</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                          <th className="py-2.5 px-3 text-right">Total (Rs.)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {filteredSales.map((sale, idx) => {
+                          const sNum = sale.saleNumber || ("#" + String(sale._id || idx + 1).slice(-6));
+                          const sDate = sale.createdAt
+                            ? new Date(sale.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) + " " +
+                              new Date(sale.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+                            : "-";
+                          const cName = sale.customer?.name || sale.client?.name || "Walk-in";
+                          const cPhone = sale.customer?.phone || sale.client?.phone || "";
+                          const method = (sale.paymentMethod || (Array.isArray(sale.payments) && sale.payments[0]?.method) || "CASH").toUpperCase();
+                          const status = sale.status || "COMPLETED";
+                          const total = Number(sale.grandTotal !== undefined ? sale.grandTotal : (sale.total || 0));
+
+                          const itemsList = Array.isArray(sale.items) ? sale.items : [];
+
+                          return (
+                            <tr key={sale._id || idx} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
+                              <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{sDate}</td>
+                              <td className="py-2.5 px-3 font-extrabold text-blue-600">{sNum}</td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-800">{cName}</div>
+                                {cPhone && <div className="text-[10px] text-slate-400">{cPhone}</div>}
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] max-w-xs">
+                                <div className="line-clamp-2">
+                                  {itemsList.map((it: any, iIdx: number) => (
+                                    <span key={iIdx} className="inline-block mr-1.5">
+                                      {it.productName || it.product?.name || "Item"} &times; {it.quantity || 1}
+                                      {iIdx < itemsList.length - 1 ? "," : ""}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-slate-700 text-[11px]">{method}</span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span
+                                  className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                    status === "COMPLETED"
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : status === "CANCELLED" || status === "VOIDED" || status === "VOID"
+                                      ? "bg-rose-100 text-rose-800"
+                                      : status === "FULL_RETURN" || status === "PARTIAL_RETURN" || status === "RETURNED"
+                                      ? "bg-amber-100 text-amber-800"
+                                      : "bg-blue-100 text-blue-800"
+                                  }`}
+                                >
+                                  {status}
                                 </span>
-                              ))}
-                            </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-black text-slate-900">
+                                {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {/* TABLE 2: Itemized Expenses Table (Shown in detailed view when enabled) */}
+              {includeExpenses && (activeSubView === "expenses" || activeSubView === "all") && (
+                <div className="bg-white rounded-xl border border-rose-200 overflow-hidden shadow-2xs">
+                  <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-200 flex items-center justify-between">
+                    <span className="text-xs font-extrabold uppercase text-rose-900 flex items-center gap-1.5">
+                      <Receipt className="w-4 h-4 text-rose-600" />
+                      Itemized Expenses Listing ({filteredExpenses.length} entries)
+                    </span>
+                    <span className="text-xs font-black text-rose-700">
+                      Total Deducted: - Rs. {expenseTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  {filteredExpenses.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      <Receipt className="w-7 h-7 mx-auto mb-1 text-slate-300" />
+                      <p className="font-bold text-slate-600">No expenses recorded for this period</p>
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-rose-950 text-white text-[11px] uppercase tracking-wider font-bold">
+                        <tr>
+                          <th className="py-2 px-3 w-10 text-center">#</th>
+                          <th className="py-2 px-3">Date & Time</th>
+                          <th className="py-2 px-3">Expense #</th>
+                          <th className="py-2 px-3">Description</th>
+                          <th className="py-2 px-3">Paid To / Payee</th>
+                          <th className="py-2 px-3 text-center">Status</th>
+                          <th className="py-2 px-3 text-right">Amount (Rs.)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {filteredExpenses.map((exp, idx) => {
+                          const eDate = exp.createdAt
+                            ? new Date(exp.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) + " " +
+                              new Date(exp.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+                            : "-";
+                          const amt = Number(exp.amount || 0);
+
+                          return (
+                            <tr key={exp._id || idx} className="hover:bg-rose-50/40 transition-colors">
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
+                              <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{eDate}</td>
+                              <td className="py-2.5 px-3 font-extrabold text-rose-700">{exp.expenseNo || "-"}</td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-800">{exp.description}</td>
+                              <td className="py-2.5 px-3 text-slate-600">{exp.toWhom || "-"}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-100 text-slate-700">
+                                  {exp.status || "APPROVED"}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-black text-rose-700">
+                                - {amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-rose-50 font-bold border-t border-rose-200 text-rose-900">
+                        <tr>
+                          <td colSpan={6} className="py-2.5 px-3 text-right font-black uppercase text-[11px]">
+                            Total Expenses Deducted:
                           </td>
-                          <td className="py-2.5 px-3">
-                            <span className="font-bold text-slate-700 text-[11px]">{method}</span>
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <span
-                              className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                status === "COMPLETED"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : status === "CANCELLED" || status === "VOIDED"
-                                  ? "bg-rose-100 text-rose-800"
-                                  : "bg-blue-100 text-blue-800"
-                              }`}
-                            >
-                              {status}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-black text-slate-900">
-                            {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <td className="py-2.5 px-3 text-right font-black text-xs text-rose-700">
+                            - Rs. {expenseTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {/* TABLE 3: Itemized Cash In / Out Movements Table (Shown in detailed view when enabled) */}
+              {(includeCashIn || includeCashOut) && (activeSubView === "cash_in_out" || activeSubView === "all") && (
+                <div className="bg-white rounded-xl border border-emerald-200 overflow-hidden shadow-2xs">
+                  <div className="px-4 py-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between">
+                    <span className="text-xs font-extrabold uppercase text-emerald-950 flex items-center gap-1.5">
+                      <ArrowLeftRight className="w-4 h-4 text-emerald-600" />
+                      Itemized Cash Movements ({visibleNotes.length} entries)
+                    </span>
+                    <span className="text-xs font-black text-emerald-800">
+                      Net Flow: {netCashFlow >= 0 ? "+" : "-"} Rs. {Math.abs(netCashFlow).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  {visibleNotes.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      <ArrowLeftRight className="w-7 h-7 mx-auto mb-1 text-slate-300" />
+                      <p className="font-bold text-slate-600">No matching cash movements recorded for this period</p>
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-emerald-950 text-white text-[11px] uppercase tracking-wider font-bold">
+                        <tr>
+                          <th className="py-2 px-3 w-10 text-center">#</th>
+                          <th className="py-2 px-3">Date & Time</th>
+                          <th className="py-2 px-3">Ref / Note #</th>
+                          <th className="py-2 px-3 text-center">Movement</th>
+                          <th className="py-2 px-3">Description</th>
+                          <th className="py-2 px-3">Party / Source</th>
+                          <th className="py-2 px-3 text-right">Amount (Rs.)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {visibleNotes.map((nt, idx) => {
+                          const nDate = nt.createdAt
+                            ? new Date(nt.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) + " " +
+                              new Date(nt.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+                            : "-";
+                          const amt = Number(nt.amount || 0);
+                          const isIn = nt.type === "+";
+
+                          return (
+                            <tr key={nt._id || idx} className="hover:bg-slate-50 transition-colors">
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
+                              <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{nDate}</td>
+                              <td className="py-2.5 px-3 font-extrabold text-slate-800">{nt.noteNo || "-"}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                    isIn
+                                      ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                      : "bg-rose-100 text-rose-800 border border-rose-200"
+                                  }`}
+                                >
+                                  {isIn ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                                  {isIn ? "+ CASH IN" : "- CASH OUT"}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-800">{nt.description}</td>
+                              <td className="py-2.5 px-3 text-slate-600">{nt.toWhom || "-"}</td>
+                              <td className={`py-2.5 px-3 text-right font-black ${isIn ? "text-emerald-700" : "text-rose-700"}`}>
+                                {isIn ? "+" : "-"} {amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-emerald-50/70 font-bold border-t border-emerald-200 text-slate-800">
+                        <tr>
+                          <td colSpan={4} className="py-2.5 px-3 text-[11px] text-slate-600">
+                            {includeCashIn && <>Cash In: <span className="font-bold text-emerald-700">+Rs. {cashInTotal.toLocaleString()}</span></>}
+                            {includeCashIn && includeCashOut && " • "}
+                            {includeCashOut && <>Cash Out: <span className="font-bold text-rose-700">-Rs. {cashOutTotal.toLocaleString()}</span></>}
+                          </td>
+                          <td colSpan={2} className="py-2.5 px-3 text-right font-black uppercase text-[11px]">
+                            Net Cash Flow Impact:
+                          </td>
+                          <td className={`py-2.5 px-3 text-right font-black text-xs ${netCashFlow >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                            {netCashFlow >= 0 ? "+" : "-"} Rs. {Math.abs(netCashFlow).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {/* SUMMARY MODE RECONCILIATION CARD (Shown when viewMode === "summary" and adjustments active) */}
+              {viewMode === "summary" && (includeCashIn || includeCashOut) && (
+                <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                  <div className="text-xs font-black uppercase tracking-wider text-slate-800 border-b border-slate-100 pb-1.5 flex items-center justify-between">
+                    <span>Summary Financial Reconciliation</span>
+                    <span className="text-[10px] text-slate-400 font-bold">Totals Only View</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                    <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Gross Sales Subtotal</div>
+                      <div className="text-xs font-black text-slate-800 mt-0.5">
+                        Rs. {salesMetrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+
+                    {includeCashIn && (
+                      <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                        <div className="text-[10px] text-emerald-700 font-bold uppercase">Total Cash In Added</div>
+                        <div className="text-xs font-black text-emerald-800 mt-0.5">
+                          + Rs. {cashInTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    )}
+
+                    {includeCashOut && (
+                      <div className="p-2.5 bg-rose-50 rounded-lg border border-rose-200">
+                        <div className="text-[10px] text-rose-700 font-bold uppercase">Total Cash Out Deducted</div>
+                        <div className="text-xs font-black text-rose-800 mt-0.5">
+                          - Rs. {cashOutTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="p-2.5 bg-emerald-600 text-white rounded-lg shadow-2xs">
+                      <div className="text-[10px] text-emerald-100 font-bold uppercase">Final Net Revenue</div>
+                      <div className="text-sm font-black text-white mt-0.5">
+                        Rs. {netRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             filteredRepairs.length === 0 ? (
               <div className="py-16 text-center text-slate-400 text-xs">
@@ -1013,8 +1656,14 @@ export function ReportsModal({
         <div className="px-5 py-3 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
           <div className="text-xs text-slate-500 font-medium">
             Active view: <span className="font-bold text-slate-800">{activeTab === "sales" ? "Sales & Revenue" : "Device Repairs"}</span>
-            {" &bull; "}
+            {" • "}
             Date period: <span className="font-bold text-slate-800">{datePreset.toUpperCase()}</span>
+            {activeTab === "sales" && (includeCashIn || includeCashOut) && (
+              <>
+                {" • "}
+                Adjustments: <span className="font-bold text-slate-800">{[includeCashIn ? "Cash In (+)" : null, includeCashOut ? "Cash Out (-)" : null].filter(Boolean).join(" & ")} ({viewMode === "detailed" ? "Itemized" : "Totals Only"})</span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

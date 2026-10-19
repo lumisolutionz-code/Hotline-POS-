@@ -2431,12 +2431,25 @@ export function generateRepairBillHtml(
  * Lists every sale individually (showing sale number, item name, count/qty, price, and line total).
  * Shows overall summary totals at the bottom (total sales count, total items sold, total revenue).
  */
+export interface DailySalesReportOptions {
+  includeExpenses?: boolean;
+  includeCashInOut?: boolean;
+  viewMode?: "summary" | "detailed";
+  expenses?: any[];
+  notes?: any[];
+  expenseTotal?: number;
+  cashInTotal?: number;
+  cashOutTotal?: number;
+  netRevenue?: number;
+}
+
 export function generateDailySalesReportHtml(
   sales: any[],
   startDate: Date,
   endDate: Date,
   shopSettings?: ShopSettings,
-  user?: any
+  user?: any,
+  options?: DailySalesReportOptions
 ): string {
   const settings = shopSettings || getShopSettings();
   const shopName = settings.shopName || "Hotline Cellular";
@@ -2899,6 +2912,42 @@ export function generateDailySalesReportHtml(
         ${salesHtml}
       </div>
 
+      ${options?.includeExpenses && options?.viewMode === "detailed" && Array.isArray(options.expenses) && options.expenses.length > 0 ? `
+        <div class="divider-double"></div>
+        <div class="summary-title">EXPENSES LISTING (${options.expenses.length})</div>
+        <div class="divider-solid"></div>
+        <div class="sales-container">
+          ${options.expenses.map((exp: any, eIdx: number) => `
+            <div class="sale-block" style="text-align: left;">
+              <div class="sale-block-header">
+                <span class="sale-badge">${eIdx + 1}. ${escapeHtml(exp.description || "Expense")}</span>
+                <span class="sale-time" style="color: #b91c1c; font-weight: 800;">- Rs. ${Number(exp.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div class="sale-cust">Paid To: ${escapeHtml(exp.toWhom || "N/A")}${exp.expenseNo ? ` &bull; ${escapeHtml(exp.expenseNo)}` : ""}</div>
+            </div>
+            ${eIdx < (options?.expenses?.length || 0) - 1 ? '<div class="divider-dotted"></div>' : ""}
+          `).join("")}
+        </div>
+      ` : ""}
+
+      ${options?.includeCashInOut && options?.viewMode === "detailed" && Array.isArray(options.notes) && options.notes.length > 0 ? `
+        <div class="divider-double"></div>
+        <div class="summary-title">CASH IN / OUT MOVEMENTS (${options.notes.length})</div>
+        <div class="divider-solid"></div>
+        <div class="sales-container">
+          ${options.notes.map((nt: any, nIdx: number) => `
+            <div class="sale-block" style="text-align: left;">
+              <div class="sale-block-header">
+                <span class="sale-badge">${nIdx + 1}. [${nt.type === "+" ? "IN" : "OUT"}] ${escapeHtml(nt.description || "Movement")}</span>
+                <span class="sale-time" style="color: ${nt.type === "+" ? "#047857" : "#b91c1c"}; font-weight: 800;">${nt.type === "+" ? "+" : "-"} Rs. ${Number(nt.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div class="sale-cust">Party: ${escapeHtml(nt.toWhom || "N/A")}${nt.noteNo ? ` &bull; ${escapeHtml(nt.noteNo)}` : ""}</div>
+            </div>
+            ${nIdx < (options?.notes?.length || 0) - 1 ? '<div class="divider-dotted"></div>' : ""}
+          `).join("")}
+        </div>
+      ` : ""}
+
       <div class="divider-double"></div>
       <div class="summary-section">
         <div class="summary-title">FINAL SUMMARY</div>
@@ -2913,9 +2962,28 @@ export function generateDailySalesReportHtml(
         </div>
         <div class="grand-total-box">
           <div class="summary-line">
-            <span class="summary-label">TOTAL REVENUE:</span>
+            <span class="summary-label">GROSS SALES REVENUE:</span>
             <span class="summary-val">Rs. ${grandTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
+          ${options?.includeExpenses ? `
+          <div class="summary-line" style="color: #b91c1c;">
+            <span class="summary-label">LESS EXPENSES:</span>
+            <span class="summary-val">- Rs. ${(options.expenseTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>` : ""}
+          ${options?.includeCashInOut ? `
+          <div class="summary-line" style="color: #047857;">
+            <span class="summary-label">ADD CASH IN (+):</span>
+            <span class="summary-val">+ Rs. ${(options.cashInTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>
+          <div class="summary-line" style="color: #b91c1c;">
+            <span class="summary-label">LESS CASH OUT (-):</span>
+            <span class="summary-val">- Rs. ${(options.cashOutTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>` : ""}
+          ${options?.includeExpenses || options?.includeCashInOut ? `
+          <div class="summary-line" style="border-top: 1px solid #000; margin-top: 2px; padding-top: 2px; font-weight: 900; font-size: 12px;">
+            <span class="summary-label">FINAL NET REVENUE:</span>
+            <span class="summary-val">Rs. ${(options.netRevenue !== undefined ? options.netRevenue : (grandTotalAmount - (options.includeExpenses ? (options.expenseTotal || 0) : 0) + (options.includeCashInOut ? ((options.cashInTotal || 0) - (options.cashOutTotal || 0)) : 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>` : ""}
           <div class="summary-line change-line">
             <span class="summary-label">TOTAL CHANGE GIVEN${changeTransactionsCount > 0 ? ` (${changeTransactionsCount})` : ""}:</span>
             <span class="summary-val">Rs. ${totalChangeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -2967,9 +3035,25 @@ export interface BusinessReportData {
   filters: ReportFilterCriteria;
   sales?: any[];
   repairs?: any[];
+  includeExpenses?: boolean;
+  includeCashInOut?: boolean;
+  includeCashIn?: boolean;
+  includeCashOut?: boolean;
+  viewMode?: "summary" | "detailed";
+  expenses?: any[];
+  notes?: any[];
+  expenseTotal?: number;
+  cashInTotal?: number;
+  cashOutTotal?: number;
+  netRevenue?: number;
   summaryMetrics?: {
     totalRecords: number;
     totalAmount: number;
+    grossSalesRevenue?: number;
+    totalExpenses?: number;
+    totalCashIn?: number;
+    totalCashOut?: number;
+    netRevenue?: number;
     totalItems?: number;
     totalDiscount?: number;
     totalPaid?: number;
@@ -3063,6 +3147,38 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
     statusBreakdown: {} as Record<string, number>,
   };
   const metrics = { ...defaultMetrics, ...(data.summaryMetrics || {}) };
+
+  const includeCashIn = data.includeCashIn !== undefined ? !!data.includeCashIn : !!data.includeCashInOut;
+  const includeCashOut = data.includeCashOut !== undefined ? !!data.includeCashOut : !!data.includeCashInOut;
+  const hasAdjustments = isSales && (data.includeExpenses || includeCashIn || includeCashOut);
+
+  const totalExpenses = data.includeExpenses
+    ? (data.expenseTotal !== undefined ? data.expenseTotal : (data.expenses || []).reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0))
+    : 0;
+  const totalCashIn = includeCashIn
+    ? (data.cashInTotal !== undefined ? data.cashInTotal : (data.notes || []).filter((n: any) => n.type === "+").reduce((sum: number, n: any) => sum + Number(n.amount || 0), 0))
+    : 0;
+  const totalCashOut = includeCashOut
+    ? (data.cashOutTotal !== undefined ? data.cashOutTotal : (data.notes || []).filter((n: any) => n.type === "-").reduce((sum: number, n: any) => sum + Number(n.amount || 0), 0))
+    : 0;
+  const netCashFlow = totalCashIn - totalCashOut;
+  const grossSalesRevenue = metrics.totalAmount;
+  const netRevenue = data.netRevenue !== undefined
+    ? data.netRevenue
+    : (grossSalesRevenue - (data.includeExpenses ? totalExpenses : 0) + totalCashIn - totalCashOut);
+
+  if (isSales && data.includeExpenses) {
+    activeFilters.push(`Expenses: Deducted (-Rs. ${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+  }
+  if (isSales && includeCashIn) {
+    activeFilters.push(`Cash In: Added (+Rs. ${totalCashIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+  }
+  if (isSales && includeCashOut) {
+    activeFilters.push(`Cash Out: Deducted (-Rs. ${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+  }
+  if (isSales && hasAdjustments) {
+    activeFilters.push(`View: ${data.viewMode === "detailed" ? "Itemized Listing" : "Summary Only"}`);
+  }
 
   const paymentBreakdown = metrics.paymentBreakdown || {};
   const paymentBreakdownList = Object.entries(paymentBreakdown).filter(([_, amt]) => Number(amt) > 0);
@@ -3598,18 +3714,39 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
           <div class="kpi-label">${isSales ? "Total Invoices" : "Total Repair Jobs"}</div>
           <div class="kpi-val">${metrics.totalRecords}</div>
         </div>
-        <div class="kpi-card highlight">
-          <div class="kpi-label">${isSales ? "Total Sales Revenue" : "Total Service Value"}</div>
-          <div class="kpi-val">Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div class="kpi-card ${hasAdjustments ? "" : "highlight"}">
+          <div class="kpi-label">${isSales ? "Gross Sales Revenue" : "Total Service Value"}</div>
+          <div class="kpi-val">Rs. ${grossSalesRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-label">${isSales ? "Items Sold" : "Paid / Collected"}</div>
-          <div class="kpi-val">${isSales ? metrics.totalItems : `Rs. ${(metrics.totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">${isSales ? "Avg Order Value" : "Pending Balance"}</div>
-          <div class="kpi-val">${isSales ? (metrics.totalRecords > 0 ? `Rs. ${(metrics.totalAmount / metrics.totalRecords).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Rs. 0.00") : `Rs. ${(metrics.totalDue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
-        </div>
+        ${hasAdjustments ? `
+          ${includeCashIn ? `
+          <div class="kpi-card">
+            <div class="kpi-label" style="color: #047857;">Total Cash In (+)</div>
+            <div class="kpi-val" style="font-size: 11.5px; color: #047857;">
+              + Rs. ${totalCashIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>` : ""}
+          ${includeCashOut ? `
+          <div class="kpi-card">
+            <div class="kpi-label" style="color: #b91c1c;">Total Cash Out (-)</div>
+            <div class="kpi-val" style="font-size: 11.5px; color: #b91c1c;">
+              - Rs. ${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>` : ""}
+          <div class="kpi-card highlight">
+            <div class="kpi-label" style="color: #15803d; font-weight: 800;">FINAL NET REVENUE</div>
+            <div class="kpi-val" style="color: #15803d;">Rs. ${netRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          </div>
+        ` : `
+          <div class="kpi-card">
+            <div class="kpi-label">${isSales ? "Items Sold" : "Paid / Collected"}</div>
+            <div class="kpi-val">${isSales ? metrics.totalItems : `Rs. ${(metrics.totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">${isSales ? "Avg Order Value" : "Pending Balance"}</div>
+            <div class="kpi-val">${isSales ? (metrics.totalRecords > 0 ? `Rs. ${(metrics.totalAmount / metrics.totalRecords).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Rs. 0.00") : `Rs. ${(metrics.totalDue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+          </div>
+        `}
       </div>
 
       <!-- 4. Data Table -->
@@ -3678,7 +3815,7 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
                     <td style="font-size: 9px; line-height: 1.3;">${itemsDesc || "Standard item sale"}</td>
                     <td class="font-bold" style="text-transform: uppercase;">${escapeHtml(String(method))}</td>
                     <td class="text-center">
-                      <span class="badge ${status === "COMPLETED" ? "badge-green" : status === "CANCELLED" || status === "VOIDED" ? "badge-red" : "badge-blue"}">${escapeHtml(status)}</span>
+                      <span class="badge ${status === "COMPLETED" ? "badge-green" : status === "CANCELLED" || status === "VOIDED" || status === "VOID" ? "badge-red" : status === "FULL_RETURN" || status === "PARTIAL_RETURN" || status === "RETURNED" ? "badge-amber" : "badge-blue"}">${escapeHtml(status)}</span>
                     </td>
                     <td class="text-right font-black">${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
@@ -3729,6 +3866,106 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
         </table>
       </div>
 
+      ${isSales && data.viewMode === "detailed" && data.includeExpenses && Array.isArray(data.expenses) && data.expenses.length > 0 ? `
+        <div style="margin-top: 14px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #b91c1c; padding-bottom: 4px;">
+          <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #b91c1c;">1. Itemized Expenses (${data.expenses.length} records)</span>
+          <span style="font-size: 11px; font-weight: 800; color: #b91c1c;">Total Deducted: - Rs. ${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 4%;">#</th>
+                <th style="width: 15%;">Date & Time</th>
+                <th style="width: 14%;">Expense #</th>
+                <th style="width: 36%;">Description</th>
+                <th style="width: 18%;">Paid To / Payee</th>
+                <th style="width: 13%;" class="text-right">Amount (Rs.)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.expenses.map((exp: any, eIdx: number) => {
+                const eDate = exp.createdAt ? new Date(exp.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(exp.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }) : "-";
+                const amt = Number(exp.amount || 0);
+                return `
+                  <tr>
+                    <td class="text-center font-bold">${eIdx + 1}</td>
+                    <td>${eDate}</td>
+                    <td class="font-bold">${escapeHtml(exp.expenseNo || "-")}</td>
+                    <td>${escapeHtml(exp.description || "Expense")}</td>
+                    <td>${escapeHtml(exp.toWhom || "-")}</td>
+                    <td class="text-right font-black" style="color: #b91c1c;">- ${amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                `;
+              }).join("")}
+              <tr style="background: #fef2f2; font-weight: 800;">
+                <td colspan="5" class="text-right">Total Expenses Deducted:</td>
+                <td class="text-right font-black" style="color: #b91c1c;">- Rs. ${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ` : ""}
+
+      ${(() => {
+        const visibleNotes = Array.isArray(data.notes) ? data.notes.filter((nt: any) => {
+          if (includeCashIn && nt.type === "+") return true;
+          if (includeCashOut && nt.type === "-") return true;
+          return false;
+        }) : [];
+        if (!isSales || data.viewMode !== "detailed" || visibleNotes.length === 0) return "";
+        return `
+        <div style="margin-top: 14px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 4px;">
+          <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #0f172a;">Itemized Cash Movements (${visibleNotes.length} records)</span>
+          <span style="font-size: 11px; font-weight: 800; color: ${netCashFlow >= 0 ? '#047857' : '#b91c1c'};">Net Movement: ${netCashFlow >= 0 ? '+' : '-'} Rs. ${Math.abs(netCashFlow).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 4%;">#</th>
+                <th style="width: 15%;">Date & Time</th>
+                <th style="width: 14%;">Ref / Note #</th>
+                <th style="width: 13%;" class="text-center">Movement</th>
+                <th style="width: 26%;">Description</th>
+                <th style="width: 15%;">Party / Source</th>
+                <th style="width: 13%;" class="text-right">Amount (Rs.)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${visibleNotes.map((nt: any, nIdx: number) => {
+                const nDate = nt.createdAt ? new Date(nt.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(nt.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }) : "-";
+                const amt = Number(nt.amount || 0);
+                const isIn = nt.type === "+";
+                return `
+                  <tr>
+                    <td class="text-center font-bold">${nIdx + 1}</td>
+                    <td>${nDate}</td>
+                    <td class="font-bold">${escapeHtml(nt.noteNo || "-")}</td>
+                    <td class="text-center">
+                      <span class="badge ${isIn ? 'badge-green' : 'badge-red'}">${isIn ? '+ CASH IN' : '- CASH OUT'}</span>
+                    </td>
+                    <td>${escapeHtml(nt.description || "Cash Movement")}</td>
+                    <td>${escapeHtml(nt.toWhom || "-")}</td>
+                    <td class="text-right font-black" style="color: ${isIn ? '#047857' : '#b91c1c'};">${isIn ? '+' : '-'} ${amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                `;
+              }).join("")}
+              <tr style="background: #f8fafc; font-weight: 800;">
+                <td colspan="4" class="text-left font-bold" style="font-size: 9px; color: #475569;">
+                  ${includeCashIn ? `Cash In: +Rs. ${totalCashIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}
+                  ${includeCashIn && includeCashOut ? " | " : ""}
+                  ${includeCashOut ? `Cash Out: -Rs. ${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}
+                </td>
+                <td colspan="2" class="text-right">Net Cash Movement:</td>
+                <td class="text-right font-black" style="color: ${netCashFlow >= 0 ? '#047857' : '#b91c1c'};">${netCashFlow >= 0 ? '+' : '-'} Rs. ${Math.abs(netCashFlow).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        `;
+      })()}
+
       <!-- 5. Totals & Payment Summary -->
       <div class="summary-section">
         <div class="payment-breakdown-box">
@@ -3763,17 +4000,32 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
 
         <table class="totals-table">
           <tr>
-            <td class="total-label">Subtotal Value:</td>
-            <td class="total-val">Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="total-label">Gross Sales Subtotal:</td>
+            <td class="total-val">Rs. ${grossSalesRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           ${metrics.totalDiscount && metrics.totalDiscount > 0 ? `
           <tr>
             <td class="total-label">Discounts Allowed:</td>
             <td class="total-val" style="color: #dc2626;">- Rs. ${metrics.totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>` : ""}
+          ${isSales && data.includeExpenses ? `
+          <tr>
+            <td class="total-label" style="color: #b91c1c;">Less Expenses Deducted:</td>
+            <td class="total-val" style="color: #b91c1c; font-weight: 800;">- Rs. ${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>` : ""}
+          ${isSales && includeCashIn ? `
+          <tr>
+            <td class="total-label" style="color: #047857;">Add Total Cash In (+):</td>
+            <td class="total-val" style="color: #047857; font-weight: 800;">+ Rs. ${totalCashIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>` : ""}
+          ${isSales && includeCashOut ? `
+          <tr>
+            <td class="total-label" style="color: #b91c1c;">Less Total Cash Out (-):</td>
+            <td class="total-val" style="color: #b91c1c; font-weight: 800;">- Rs. ${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>` : ""}
           <tr class="grand-row">
-            <td class="total-label" style="font-weight: 900;">NET TOTAL:</td>
-            <td class="total-val" style="font-weight: 900;">Rs. ${metrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="total-label" style="font-weight: 900;">${hasAdjustments ? "FINAL ADJUSTED NET REVENUE:" : "NET TOTAL:"}</td>
+            <td class="total-val" style="font-weight: 900; color: #15803d;">Rs. ${(hasAdjustments ? netRevenue : metrics.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
         </table>
       </div>

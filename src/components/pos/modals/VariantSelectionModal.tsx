@@ -18,20 +18,11 @@ export function VariantSelectionModal({
   cart?: any[];
   isLoading?: boolean;
   onClose: () => void;
-  onSelectVariant: (variant: ProductVariant, serialNumber?: string, stockItemId?: string, stockItemPrice?: number) => void;
+  onSelectVariant: (variant?: ProductVariant | null, serialNumber?: string, stockItemId?: string, stockItemPrice?: number) => void;
 }) {
   // Local variants list that can be updated from parent or from background API
   const [variantsList, setVariantsList] = useState<ProductVariant[]>(() => {
     return Array.isArray(product.variants) ? product.variants : [];
-  });
-
-  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(() => {
-    const list = Array.isArray(product.variants) && product.variants.length > 0 ? product.variants : [];
-    if (initialVariantId && list.length > 0) {
-      const found = list.find((v) => String(v._id) === String(initialVariantId));
-      if (found) return found;
-    }
-    return list.length > 0 ? list[0] : null;
   });
 
   // Physical stock items (individual devices with IMEIs)
@@ -41,16 +32,6 @@ export function VariantSelectionModal({
   const [isLoadingStock, setIsLoadingStock] = useState<boolean>(false);
   const isDataLoading = Boolean(isLoading || isLoadingStock);
   const [selectedStockItem, setSelectedStockItem] = useState<any | null>(null);
-
-  // Code / Search Input: accepts Device IMEI for IMEI products, or Barcode/SKU/Serial for Quantity products
-  const [codeInput, setCodeInput] = useState<string>(initialSerialNumber || "");
-
-  const [verifiedStockItem, setVerifiedStockItem] = useState<any | null>(null);
-  const [verifiedCode, setVerifiedCode] = useState<string | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [toastError, setToastError] = useState<string | null>(null);
-
-  const codeInputRef = useRef<HTMLInputElement>(null);
 
   // Determine if this product or its variants require IMEI tracking
   const isImeiProduct = (() => {
@@ -73,6 +54,31 @@ export function VariantSelectionModal({
     if (/\b(phone|smartphone|iphone|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|huawei)\b/i.test(product.name || "")) return true;
     return false;
   })();
+
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(() => {
+    if (isImeiProduct && !initialVariantId) {
+      return null;
+    }
+    const list = Array.isArray(product.variants) && product.variants.length > 0 ? product.variants : [];
+    if (initialVariantId && list.length > 0) {
+      const found = list.find((v) => String(v._id) === String(initialVariantId));
+      if (found) return found;
+    }
+    return !isImeiProduct && list.length > 0 ? list[0] : null;
+  });
+
+  // Variant filter state for in-stock devices: "ALL" | "NO_VARIANT" | <variantId>
+  const [variantFilter, setVariantFilter] = useState<string>("ALL");
+
+  // Code / Search Input: accepts Device IMEI for IMEI products, or Barcode/SKU/Serial for Quantity products
+  const [codeInput, setCodeInput] = useState<string>(initialSerialNumber || "");
+
+  const [verifiedStockItem, setVerifiedStockItem] = useState<any | null>(null);
+  const [verifiedCode, setVerifiedCode] = useState<string | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [toastError, setToastError] = useState<string | null>(null);
+
+  const codeInputRef = useRef<HTMLInputElement>(null);
 
   const showError = (msg: string) => {
     setToastError(msg);
@@ -108,50 +114,36 @@ export function VariantSelectionModal({
   useEffect(() => {
     const activeList = variantsList.length > 0 ? variantsList : (product.variants || []);
     if (!selectedVariant && activeList.length > 0) {
-      const found = initialVariantId
-        ? activeList.find((v) => String(v._id) === String(initialVariantId))
-        : null;
-      setSelectedVariant(found || activeList[0]);
+      if (initialVariantId) {
+        const found = activeList.find((v) => String(v._id) === String(initialVariantId));
+        if (found) setSelectedVariant(found);
+      } else if (!isImeiProduct) {
+        setSelectedVariant(activeList[0]);
+      }
     } else if (selectedVariant && activeList.length > 0) {
       const updated = activeList.find((v) => String(v._id) === String(selectedVariant._id));
       if (updated && (updated.sellingPrice !== selectedVariant.sellingPrice || (updated as any).stock !== (selectedVariant as any).stock || updated.stockQty !== selectedVariant.stockQty)) {
         setSelectedVariant(updated);
       }
     }
-  }, [variantsList, product.variants, initialVariantId, selectedVariant]);
+  }, [variantsList, product.variants, initialVariantId, selectedVariant, isImeiProduct]);
 
-  // Helper to reliably resolve variant for any physical device without failing
-  const resolveDeviceVariant = (item: any): ProductVariant => {
-    const itemVariantId = item?.variant?._id || item?.variant;
+  // Helper to reliably resolve variant for any physical device without inventing a false variant
+  const resolveDeviceVariant = (item: any): ProductVariant | null => {
+    if (!item) return null;
+    const itemVariantId = item?.variant?._id || (typeof item?.variant === "string" ? item.variant : undefined);
     const activeVariants = variantsList.length > 0 ? variantsList : (product.variants || []);
 
-    let foundVar = activeVariants.find((v) => String(v._id) === String(itemVariantId));
-    if (!foundVar && selectedVariant) {
-      foundVar = selectedVariant;
+    if (itemVariantId) {
+      const foundVar = activeVariants.find((v) => String(v._id) === String(itemVariantId));
+      if (foundVar) return foundVar;
     }
-    if (!foundVar && activeVariants.length > 0) {
-      foundVar = activeVariants[0];
+
+    if (item?.variant && typeof item.variant === "object" && (item.variant._id || (Array.isArray(item.variant.attributes) && item.variant.attributes.length > 0))) {
+      return item.variant as ProductVariant;
     }
-    if (!foundVar && item?.variant && typeof item.variant === "object" && item.variant._id) {
-      foundVar = item.variant as ProductVariant;
-    }
-    if (!foundVar) {
-      // Safe fallback virtual variant for products where variants are optional or snapshot-based
-      foundVar = {
-        _id: (typeof item?.variant === "string" ? item.variant : undefined) || (product._id as string),
-        product: product._id as any,
-        name: product.name,
-        attributes: item?.variant?.attributes || [],
-        sellingPrice: item?.sellingPrice || product.sellingPrice || 0,
-        costPrice: item?.costPrice || product.costPrice || 0,
-        originalPrice: product.originalPrice || product.sellingPrice || 0,
-        effectivePrice: item?.sellingPrice || product.sellingPrice || 0,
-        stock: 1,
-        stockQty: 1,
-        isActive: true,
-      } as ProductVariant;
-    }
-    return foundVar;
+
+    return null;
   };
 
   // Fetch stock items & variants if not already passed in
@@ -216,7 +208,7 @@ export function VariantSelectionModal({
   };
 
   const getVariantBadges = (variant: any): string[] => {
-    if (!variant) return ["Standard"];
+    if (!variant) return [];
     if (Array.isArray(variant.attributes)) {
       const badges: string[] = [];
       variant.attributes.forEach((attr: any) => {
@@ -248,7 +240,13 @@ export function VariantSelectionModal({
       });
       if (entries.length > 0) return entries;
     }
-    return [variant.itemCode || variant.sku || "Standard Variant"];
+    if (variant.name && variant.name !== product.name) {
+      return [variant.name];
+    }
+    if (variant.itemCode || variant.sku) {
+      return [variant.itemCode || variant.sku];
+    }
+    return [];
   };
 
   const getVariantPrice = (variant: any): number => {
@@ -276,6 +274,33 @@ export function VariantSelectionModal({
     }
     return getVariantPrice(variant);
   };
+
+  // Extract ONLY variants that actually exist in the current stock items for this product
+  const stockVariantsSummary = useMemo(() => {
+    const map = new Map<string, { id: string; label: string; count: number }>();
+    let noVariantCount = 0;
+
+    stockItems.forEach((item: any) => {
+      const v = resolveDeviceVariant(item);
+      if (v && v._id) {
+        const id = String(v._id);
+        const badges = getVariantBadges(v);
+        const label = badges.length > 0 ? badges.join(" • ") : (v.name || "Variant");
+        if (!map.has(id)) {
+          map.set(id, { id, label, count: 0 });
+        }
+        map.get(id)!.count += 1;
+      } else {
+        noVariantCount += 1;
+      }
+    });
+
+    return {
+      variants: Array.from(map.values()),
+      hasNoVariant: noVariantCount > 0,
+      noVariantCount,
+    };
+  }, [stockItems, variantsList, product.variants]);
 
   // Substring highlight helper for visual clarity when searching
   const highlightMatch = (text: string | undefined, query: string) => {
@@ -312,11 +337,21 @@ export function VariantSelectionModal({
     );
   };
 
-  // Filter stock items in real-time based on search input
+  // Filter stock items in real-time based on search input & selected variant filter
   const filteredStockItems = useMemo(() => {
     const trimmed = codeInput.trim().toLowerCase();
     return stockItems.filter((item: any) => {
-      // Search query filter (checks imei1, imei2, serialNumber, and variant attributes)
+      // 1. Variant Filter (only in-stock variants or unassigned items)
+      if (variantFilter !== "ALL") {
+        const matchingVar = resolveDeviceVariant(item);
+        if (variantFilter === "NO_VARIANT") {
+          if (matchingVar !== null) return false;
+        } else {
+          if (!matchingVar || String(matchingVar._id) !== variantFilter) return false;
+        }
+      }
+
+      // 2. Search query filter (checks imei1, imei2, serialNumber, and variant attributes)
       if (!trimmed) return true;
 
       const im1 = String(item.imei1 || "").toLowerCase();
@@ -328,7 +363,7 @@ export function VariantSelectionModal({
 
       return im1.includes(trimmed) || im2.includes(trimmed) || sn.includes(trimmed) || varBadges.includes(trimmed);
     });
-  }, [stockItems, codeInput, variantsList, product.variants]);
+  }, [stockItems, variantFilter, codeInput, variantsList, product.variants]);
 
   // Filter variants (for non-IMEI items or when displaying variant list)
   const filteredVariants = useMemo(() => {
@@ -352,10 +387,7 @@ export function VariantSelectionModal({
     }
 
     const matchingVar = resolveDeviceVariant(item);
-
-    if (matchingVar) {
-      setSelectedVariant(matchingVar);
-    }
+    setSelectedVariant(matchingVar);
     setSelectedStockItem(item);
     const chosenCode = item.imei1 || item.imei2 || item.serialNumber || "";
     setCodeInput(chosenCode);
@@ -373,7 +405,7 @@ export function VariantSelectionModal({
 
     const matchingVar = resolveDeviceVariant(item);
     const finalSerial = item.imei1 || item.imei2 || item.serialNumber || "";
-    const finalPrice = item.sellingPrice || getFinalPrice(matchingVar, item);
+    const finalPrice = item.sellingPrice || (matchingVar ? getFinalPrice(matchingVar, item) : (product.effectivePrice || product.sellingPrice || 0));
 
     onSelectVariant(matchingVar, finalSerial, item._id, finalPrice);
   };
@@ -950,14 +982,24 @@ export function VariantSelectionModal({
                 </div>
               </div>
 
-              {/* Active Selection Summary Card: Thick dark border */}
-              {(selectedStockItem || selectedVariant) && (
+              {/* Active Selection Summary Card */}
+              {(selectedStockItem || selectedVariant) ? (
                 <div className="p-3.5 bg-white border-2 border-slate-900 rounded-xl shadow-2xs space-y-1.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                     CURRENTLY SELECTED {selectedStockItem ? "DEVICE" : "VARIANT"}
                   </p>
                   <p className="text-sm font-bold text-slate-900 leading-snug">
-                    {selectedVariant ? getVariantBadges(selectedVariant).join(" • ") : product.name}
+                    {selectedStockItem ? (
+                      (() => {
+                        const devVar = resolveDeviceVariant(selectedStockItem);
+                        const b = devVar ? getVariantBadges(devVar) : [];
+                        return b.length > 0 ? b.join(" • ") : "Standard (No Variant)";
+                      })()
+                    ) : (
+                      selectedVariant && getVariantBadges(selectedVariant).length > 0
+                        ? getVariantBadges(selectedVariant).join(" • ")
+                        : (selectedVariant?.name || product.name)
+                    )}
                   </p>
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                     <span className="font-mono text-xs font-bold text-blue-600">
@@ -968,13 +1010,30 @@ export function VariantSelectionModal({
                     </span>
                   </div>
                 </div>
+              ) : (
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    PRODUCT SUMMARY
+                  </p>
+                  <p className="text-sm font-bold text-slate-800 leading-snug truncate">
+                    {product.name}
+                  </p>
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
+                    <span className="font-mono text-xs font-semibold text-slate-500">
+                      {product?.itemCode || product?.sku || "Select a device to proceed"}
+                    </span>
+                    <span className="text-base font-black text-slate-800">
+                      Rs. {((product.effectivePrice || product.sellingPrice || 0) as number).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
               )}
 
             </div>
 
             {/* RIGHT COLUMN: Available Devices & Specification List */}
             <div className="md:col-span-7 flex flex-col">
-              <div className="flex items-center justify-between mb-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-800">
                     {isImeiProduct && stockItems.length > 0
@@ -987,20 +1046,49 @@ export function VariantSelectionModal({
                       : "Click to select • Double-click to add"}
                   </p>
                 </div>
-                {codeInput.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCodeInput("");
-                      setVerifiedCode(null);
-                      setVerifiedStockItem(null);
-                      setSelectedStockItem(null);
-                    }}
-                    className="text-xs text-blue-600 hover:underline font-semibold cursor-pointer"
-                  >
-                    Show All ({stockItems.length})
-                  </button>
-                )}
+
+                {/* Filter Dropdown & Clear */}
+                <div className="flex items-center gap-2">
+                  {isImeiProduct && stockItems.length > 0 && (stockVariantsSummary.variants.length > 0 || stockVariantsSummary.hasNoVariant) && (
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        id="imei-variant-filter"
+                        value={variantFilter}
+                        onChange={(e) => setVariantFilter(e.target.value)}
+                        className="text-xs font-semibold bg-slate-100 hover:bg-slate-200/80 border border-slate-300 text-slate-800 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer transition-colors shadow-2xs max-w-[200px] truncate"
+                        title="Filter devices by in-stock variant"
+                      >
+                        <option value="ALL">All In-Stock ({stockItems.length})</option>
+                        {stockVariantsSummary.variants.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.label} ({v.count})
+                          </option>
+                        ))}
+                        {stockVariantsSummary.hasNoVariant && (
+                          <option value="NO_VARIANT">
+                            No Variant ({stockVariantsSummary.noVariantCount})
+                          </option>
+                        )}
+                      </select>
+                    </div>
+                  )}
+
+                  {(codeInput.trim() || variantFilter !== "ALL") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCodeInput("");
+                        setVariantFilter("ALL");
+                        setVerifiedCode(null);
+                        setVerifiedStockItem(null);
+                        setSelectedStockItem(null);
+                      }}
+                      className="text-xs text-blue-600 hover:underline font-semibold cursor-pointer whitespace-nowrap"
+                    >
+                      Reset ({stockItems.length})
+                    </button>
+                  )}
+                </div>
               </div>
 
 
@@ -1069,7 +1157,7 @@ export function VariantSelectionModal({
                       
                       const matchingVar = resolveDeviceVariant(item);
                       
-                      const badges = matchingVar ? getVariantBadges(matchingVar) : ["Standard"];
+                      const badges = matchingVar ? getVariantBadges(matchingVar) : [];
                       const price = item.sellingPrice || (matchingVar ? getVariantPrice(matchingVar) : (product.effectivePrice || product.sellingPrice || 0));
 
                       return (
@@ -1089,14 +1177,20 @@ export function VariantSelectionModal({
                           <div className="flex-1 min-w-0">
                             {/* Variant Badges */}
                             <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
-                              {badges.map((badge, bIdx) => (
-                                <span
-                                  key={bIdx}
-                                  className="bg-slate-100 text-slate-700 text-xs font-medium px-2.5 py-1 rounded-lg"
-                                >
-                                  {badge}
+                              {badges.length > 0 ? (
+                                badges.map((badge, bIdx) => (
+                                  <span
+                                    key={bIdx}
+                                    className="bg-slate-100 text-slate-700 text-xs font-semibold px-2.5 py-1 rounded-lg border border-slate-200/60"
+                                  >
+                                    {badge}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="bg-slate-100 text-slate-500 text-xs font-medium px-2 py-0.5 rounded-md italic">
+                                  No Variant
                                 </span>
-                              ))}
+                              )}
                             </div>
 
                             {/* SN Badge */}
@@ -1162,22 +1256,25 @@ export function VariantSelectionModal({
                         <Search className="w-6 h-6" />
                       </div>
                       <p className="text-sm font-bold text-slate-700">
-                        No devices found matching "{codeInput}"
+                        {codeInput.trim()
+                          ? `No devices found matching "${codeInput}"`
+                          : "No devices found for the selected variant"}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        Check the IMEI number or clear your search to view all {stockItems.length} devices in stock.
+                        Check your search or filter to view all {stockItems.length} devices in stock.
                       </p>
                       <button
                         type="button"
                         onClick={() => {
                           setCodeInput("");
+                          setVariantFilter("ALL");
                           setVerifiedCode(null);
                           setVerifiedStockItem(null);
                           setSelectedStockItem(null);
                         }}
                         className="mt-3 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all cursor-pointer shadow-xs"
                       >
-                        Clear Search
+                        Reset Filter & Search
                       </button>
                     </div>
                   )

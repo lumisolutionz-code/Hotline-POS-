@@ -224,6 +224,12 @@ export default function POS(): JSX.Element {
   // Cash Drawer Session State
   const [activeCashSession, setActiveCashSession] = useState<any | null>(null);
   const [expectedOpeningAmount, setExpectedOpeningAmount] = useState<number>(0);
+  const [expectedReloadBalances, setExpectedReloadBalances] = useState<{
+    dialog: number;
+    mobitel: number;
+    airtel: number;
+    hutch: number;
+  }>({ dialog: 0, mobitel: 0, airtel: 0, hutch: 0 });
   const [showCashDrawerModal, setShowCashDrawerModal] = useState<boolean>(false);
   const [cashDrawerModalMode, setCashDrawerModalMode] = useState<"OPEN" | "VIEW" | "CLOSE">("OPEN");
   const [sessionTimerDisplay, setSessionTimerDisplay] = useState<string>("00:00:00");
@@ -233,6 +239,9 @@ export default function POS(): JSX.Element {
     try {
       const res = await api<any>("/cash-sessions/current");
       if (res.status === "success" && res.data) {
+        if (res.data.expectedReloadBalances) {
+          setExpectedReloadBalances(res.data.expectedReloadBalances);
+        }
         if (res.data.hasActiveSession && res.data.session) {
           setActiveCashSession(res.data.session);
         } else {
@@ -1732,7 +1741,7 @@ export default function POS(): JSX.Element {
   const addToCart = (product: Product, serialNumber?: string, variant?: any, stockItemId?: string, stockItemPrice?: number, skipSerial: boolean = false): void => {
     // If product has multiple variants and no specific variant was passed, open VariantSelectionModal first
     const hasMultipleVariants = Boolean(product.variants && product.variants.length > 1);
-    if (hasMultipleVariants && !variant) {
+    if (hasMultipleVariants && !variant && !stockItemId && !serialNumber) {
       handleProductClick(product);
       return;
     }
@@ -2405,16 +2414,16 @@ export default function POS(): JSX.Element {
               </button>
             )}
 
-            {/* Extras (Expenses & Notes) */}
+            {/* Store Ledger (Cash In & Out) */}
             <button
               onClick={() => setShowExpensesPanel(true)}
               className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#fff7ed] hover:bg-[#ffedd5] text-[#ea580c] border border-[#fed7aa] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
-              title="Extras (Expenses & Notes)"
+              title="Store Ledger (Cash In & Out)"
             >
               <svg className="w-3 h-3 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
-              <span>Extras</span>
+              <span>Ledger</span>
             </button>
 
             {/* Returns */}
@@ -3344,6 +3353,7 @@ export default function POS(): JSX.Element {
           mode={cashDrawerModalMode}
           activeSession={activeCashSession}
           expectedOpeningAmount={expectedOpeningAmount}
+          expectedReloadBalances={expectedReloadBalances}
           currentCashierName={user?.username || "Cashier"}
           onClose={() => setShowCashDrawerModal(false)}
           onSessionStarted={(session) => {
