@@ -14,7 +14,7 @@ export default function Login(): JSX.Element {
   const [branchError, setBranchError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [appVersion, setAppVersion] = useState("1.2.2");
+  const [appVersion, setAppVersion] = useState("1.3.1");
   const navigate = useNavigate();
   const { login, isAuthenticated, hasPermission, user } = useAuth();
 

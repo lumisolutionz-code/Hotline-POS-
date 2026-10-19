@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Receipt, FileText, Check, Banknote, CreditCard } from "lucide-react";
+import { Receipt, FileText, Check, Banknote, CreditCard, Smartphone, Landmark, AlertCircle } from "lucide-react";
 import { api } from "../../../lib/api";
 import { getShopSettings } from "../../../lib/settings";
 import {
@@ -20,7 +20,12 @@ export function PaymentModal({
   onClose,
   onSuccess,
 }: PaymentModalProps): JSX.Element {
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD">("CASH");
+  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD" | "KOKO">("CASH");
+  const [kokoConfig, setKokoConfig] = useState<{ splitParts: number; feePercentage: number; enabled: boolean }>({
+    splitParts: 3,
+    feePercentage: 12,
+    enabled: true,
+  });
   const [printBill, setPrintBill] = useState<boolean>(true);
   const [printInvoice, setPrintInvoice] = useState<boolean>(false);
   const [amountReceived, setAmountReceived] = useState<string>("");
@@ -44,6 +49,30 @@ export function PaymentModal({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose, showOverrideModal, processing, success]);
+
+  // Load Koko BNPL configuration from backend settings
+  useEffect(() => {
+    api<{ status: string; data?: { settings?: any } }>("/settings/koko")
+      .then((res) => {
+        if (res.data?.settings) {
+          setKokoConfig({
+            splitParts: Number(res.data.settings.splitParts) || 3,
+            feePercentage: Number(res.data.settings.feePercentage) || 12,
+            enabled: res.data.settings.enabled ?? true,
+          });
+        }
+      })
+      .catch(() => {
+        // use default fallback
+      });
+  }, []);
+
+  const kokoSplitParts = Math.max(1, kokoConfig.splitParts || 3);
+  const kokoFeePct = Math.max(0, kokoConfig.feePercentage || 12);
+  const kokoFirstInstallment = Math.round((total / kokoSplitParts) * 100) / 100;
+  const kokoFeeAmount = Math.round(((kokoFirstInstallment * kokoFeePct) / 100) * 100) / 100;
+  const kokoNetBankPayout = Math.round((kokoFirstInstallment - kokoFeeAmount) * 100) / 100;
+  const kokoRemainingAmount = Math.max(0, Math.round((total - kokoFirstInstallment) * 100) / 100);
 
   const totalItemDiscount = cart.reduce(
     (sum, item) => sum + (Number(item.discountAmount ?? 0) * item.quantity),
@@ -101,9 +130,19 @@ export function PaymentModal({
                 payments: [
                   {
                     method: paymentMethod,
-                    amount: Math.max(0, parseFloat(amountReceived) || total),
+                    amount: paymentMethod === "KOKO" ? total : Math.max(0, parseFloat(amountReceived) || total),
                   },
                 ],
+                paymentMethod: paymentMethod,
+                kokoDetails: paymentMethod === "KOKO" ? {
+                  splitParts: kokoSplitParts,
+                  feePercentage: kokoFeePct,
+                  firstInstallmentAmount: kokoFirstInstallment,
+                  feeAmount: kokoFeeAmount,
+                  netFirstPayout: kokoNetBankPayout,
+                  remainingAmount: kokoRemainingAmount,
+                  settlementStatus: "PENDING",
+                } : undefined,
                 customer: customerData,
                 discountType: (orderDiscount && orderDiscount > 0) ? "FIXED" : undefined,
                 discountValue: (orderDiscount && orderDiscount > 0) ? orderDiscount : 0,
@@ -142,9 +181,19 @@ export function PaymentModal({
               payments: [
                 {
                   method: paymentMethod,
-                  amount: parseFloat(amountReceived) || total,
+                  amount: paymentMethod === "KOKO" ? total : (parseFloat(amountReceived) || total),
                 },
               ],
+              paymentMethod: paymentMethod,
+              kokoDetails: paymentMethod === "KOKO" ? {
+                splitParts: kokoSplitParts,
+                feePercentage: kokoFeePct,
+                firstInstallmentAmount: kokoFirstInstallment,
+                feeAmount: kokoFeeAmount,
+                netFirstPayout: kokoNetBankPayout,
+                remainingAmount: kokoRemainingAmount,
+                settlementStatus: "PENDING",
+              } : undefined,
               discountType: (orderDiscount && orderDiscount > 0) ? "FIXED" : undefined,
               discountValue: (orderDiscount && orderDiscount > 0) ? orderDiscount : 0,
               tax: tax,
@@ -406,94 +455,86 @@ export function PaymentModal({
             </div>
           )}
 
-          {/* Payment Method & Print Documents in 2 columns */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Payment Method */}
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                Payment Method
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { method: "CASH" as const, icon: Banknote, label: "Cash" },
-                  { method: "CARD" as const, icon: CreditCard, label: "Card" },
-                ].map(({ method, icon: Icon, label }) => (
-                  <button
-                    key={method}
-                    type="button"
-                    onClick={() => {
-                      setPaymentMethod(method);
-                      if (method === "CARD") {
-                        setAmountReceived(String(total));
-                      }
-                    }}
-                    className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                      paymentMethod === method
-                        ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
-                        : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span className="text-xs font-semibold flex items-center gap-1">
-                      {label}
-                      {paymentMethod === method && (
-                        <span className="text-[10px] bg-white/20 px-1 rounded-full font-bold">
-                          <Check className="w-2.5 h-2.5 inline stroke-[3]" />
-                        </span>
-                      )}
+          {/* Payment Method Selection */}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+              Payment Method
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { method: "CASH" as const, icon: Banknote, label: "Cash" },
+                { method: "CARD" as const, icon: CreditCard, label: "Card" },
+                { method: "KOKO" as const, icon: Smartphone, label: "Koko Pay" },
+              ].map(({ method, icon: Icon, label }) => (
+                <button
+                  key={method}
+                  type="button"
+                  onClick={() => {
+                    setPaymentMethod(method);
+                    if (method === "CARD" || method === "KOKO") {
+                      setAmountReceived(String(total));
+                    }
+                  }}
+                  className={`h-10 px-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    paymentMethod === method
+                      ? method === "KOKO"
+                        ? "bg-purple-600 text-white shadow-xs border border-purple-600"
+                        : "bg-blue-600 text-white shadow-xs border border-blue-600"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span className="text-xs font-bold whitespace-nowrap">{label}</span>
+                  {paymentMethod === method && (
+                    <span className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center shrink-0 ml-0.5">
+                      <Check className="w-2.5 h-2.5 stroke-[3]" />
                     </span>
-                  </button>
-                ))}
-              </div>
+                  )}
+                </button>
+              ))}
             </div>
+          </div>
 
-            {/* Print Documents (Bill / Invoice) */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Print Documents
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPrintBill(!printBill)}
-                  className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                    printBill
-                      ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
-                      : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
-                  }`}
-                >
-                  <Receipt className="w-3.5 h-3.5" />
-                  <span className="text-xs font-semibold flex items-center gap-1">
-                    Bill
-                    {printBill && (
-                      <span className="text-[10px] bg-white/20 px-1 rounded-full font-bold">
-                        <Check className="w-2.5 h-2.5 inline stroke-[3]" />
-                      </span>
-                    )}
+          {/* Print Documents (Bill / Invoice) */}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+              Print Documents
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPrintBill(!printBill)}
+                className={`h-10 px-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  printBill
+                    ? "bg-blue-600 text-white shadow-xs border border-blue-600"
+                    : "bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+                }`}
+              >
+                <Receipt className="w-4 h-4 shrink-0" />
+                <span className="text-xs font-bold whitespace-nowrap">POS Bill</span>
+                {printBill && (
+                  <span className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center shrink-0 ml-0.5">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
                   </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrintInvoice(!printInvoice)}
-                  className={`py-2 px-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                    printInvoice
-                      ? "bg-blue-600 text-white shadow-xs border border-blue-600 font-bold"
-                      : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200"
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span className="text-xs font-semibold flex items-center gap-1">
-                    Invoice
-                    {printInvoice && (
-                      <span className="text-[10px] bg-white/20 px-1 rounded-full font-bold">
-                        <Check className="w-2.5 h-2.5 inline stroke-[3]" />
-                      </span>
-                    )}
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintInvoice(!printInvoice)}
+                className={`h-10 px-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  printInvoice
+                    ? "bg-blue-600 text-white shadow-xs border border-blue-600"
+                    : "bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+                }`}
+              >
+                <FileText className="w-4 h-4 shrink-0" />
+                <span className="text-xs font-bold whitespace-nowrap">Invoice</span>
+                {printInvoice && (
+                  <span className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center shrink-0 ml-0.5">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
                   </span>
-                </button>
-              </div>
+                )}
+              </button>
             </div>
           </div>
 
@@ -520,6 +561,77 @@ export function PaymentModal({
                 </span>
                 <span className="text-base font-black text-blue-600 dark:text-blue-400">
                   Rs. {total.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Koko BNPL Payment Breakdown */}
+          {paymentMethod === "KOKO" && (
+            <div className="bg-gradient-to-br from-purple-50 to-indigo-50/60 border border-purple-200 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-purple-200/80">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-purple-600 text-white flex items-center justify-center font-black text-xs shadow-xs">
+                    KOKO
+                  </div>
+                  <div>
+                    <p className="text-xs font-black text-purple-950 flex items-center gap-1.5">
+                      Koko Pay (3-Part Installment)
+                    </p>
+                    <p className="text-[10px] text-purple-700">
+                      Customer charged 1/{kokoSplitParts} upfront via Koko App
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-extrabold uppercase">
+                  Pending Settlement
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 bg-white rounded-lg border border-purple-100 shadow-2xs">
+                  <div className="text-[10px] text-slate-500 font-bold uppercase">1st Installment (1/{kokoSplitParts})</div>
+                  <div className="text-xs font-black text-slate-900 mt-0.5">
+                    Rs. {kokoFirstInstallment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-rose-50/80 rounded-lg border border-rose-100">
+                  <div className="text-[10px] text-rose-700 font-bold uppercase">Koko Fee ({kokoFeePct}%)</div>
+                  <div className="text-xs font-black text-rose-800 mt-0.5">
+                    - Rs. {kokoFeeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200 col-span-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] text-emerald-800 font-bold uppercase flex items-center gap-1">
+                        <Landmark className="w-3.5 h-3.5 text-emerald-600" />
+                        Net Direct to Bank (Day 1)
+                      </div>
+                      <div className="text-[10px] text-emerald-700 mt-0.5">Deposited directly to store bank account</div>
+                    </div>
+                    <div className="text-sm font-black text-emerald-800 font-mono">
+                      Rs. {kokoNetBankPayout.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-2 bg-purple-100/70 rounded-lg border border-purple-200 col-span-2 flex items-center justify-between">
+                  <span className="text-[11px] text-purple-900 font-bold">
+                    Remaining ({kokoSplitParts - 1}/{kokoSplitParts}) Due in ~2 Weeks:
+                  </span>
+                  <span className="text-xs font-black text-purple-950 font-mono">
+                    Rs. {kokoRemainingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2 bg-amber-50 rounded-lg border border-amber-200 text-[10px] text-amber-900 flex items-start gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  Sale status will be registered as <strong>PENDING</strong>. You can filter pending sales in Sales Panel and mark completed when full funds arrive.
                 </span>
               </div>
             </div>

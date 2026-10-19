@@ -36,6 +36,7 @@ import {
   WarrantyPanel,
   SimReloadPanel,
   CashDrawerModal,
+  LoansPanel,
 } from "../components/pos";
 
 import companyIcon from "../assets/company-icon.png";
@@ -192,6 +193,7 @@ export default function POS(): JSX.Element {
   // Repairs Panel State
   const [showRepairsPanel, setShowRepairsPanel] = useState<boolean>(false);
   const [showExpensesPanel, setShowExpensesPanel] = useState<boolean>(false);
+  const [showLoansPanel, setShowLoansPanel] = useState<boolean>(false);
   const [showSimReloadPanel, setShowSimReloadPanel] = useState<boolean>(false);
   const [repairs, setRepairs] = useState<RepairJob[]>([]);
   const [repairsLoading, setRepairsLoading] = useState<boolean>(false);
@@ -1238,16 +1240,17 @@ export default function POS(): JSX.Element {
     }
   };
 
-  const fetchSalesData = async (filters?: { search?: string; startDate?: string; endDate?: string }) => {
+  const fetchSalesData = async (filters?: { search?: string; startDate?: string; endDate?: string; status?: string; paymentMethod?: string }) => {
     setSalesLoading(true);
     try {
       let queryStr = "/sales?limit=100";
       if (filters?.startDate) queryStr += `&startDate=${filters.startDate}`;
       if (filters?.endDate) queryStr += `&endDate=${filters.endDate}`;
+      if (filters?.status && filters.status !== "all") queryStr += `&status=${filters.status}`;
+      if (filters?.paymentMethod && filters.paymentMethod !== "all") queryStr += `&paymentMethod=${filters.paymentMethod}`;
+      if (filters?.search) queryStr += `&search=${encodeURIComponent(filters.search)}`;
       
-      const salesReq = filters?.search 
-        ? api<any>(`/sales/search?q=${encodeURIComponent(filters.search)}`)
-        : api<any>(queryStr);
+      const salesReq = api<any>(queryStr);
 
       const [salesRes, summaryRes] = await Promise.all([
         salesReq,
@@ -2414,11 +2417,11 @@ export default function POS(): JSX.Element {
               </button>
             )}
 
-            {/* Store Ledger (Cash In & Out) */}
+            {/* Store Ledger (Cash In, Out & Loans) */}
             <button
               onClick={() => setShowExpensesPanel(true)}
               className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#fff7ed] hover:bg-[#ffedd5] text-[#ea580c] border border-[#fed7aa] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
-              title="Store Ledger (Cash In & Out)"
+              title="Store Ledger (Cash In, Out & Loans)"
             >
               <svg className="w-3 h-3 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -3219,6 +3222,10 @@ export default function POS(): JSX.Element {
 
       {showExpensesPanel && (
         <ExpensesPanel onClose={() => setShowExpensesPanel(false)} />
+      )}
+
+      {showLoansPanel && (
+        <LoansPanel onClose={() => setShowLoansPanel(false)} />
       )}
 
       {showSimReloadPanel && (

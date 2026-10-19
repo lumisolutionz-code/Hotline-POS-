@@ -19,6 +19,7 @@ import {
   ListFilter,
   Check,
   Coins,
+  CreditCard,
 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { getShopSettings } from "../../../lib/settings";
@@ -54,6 +55,20 @@ export interface ReportNote {
   createdBy?: { _id: string; username: string };
 }
 
+export interface ReportLoanPayment {
+  _id: string;
+  paymentNo?: string;
+  loan?: string | { _id: string; title: string; loanNo: string };
+  loanTitle?: string;
+  amount: number;
+  dailyPayingAmount?: number;
+  paymentDate?: string;
+  createdAt?: string;
+  paymentMethod?: string;
+  notes?: string;
+  createdBy?: { _id: string; username: string };
+}
+
 export interface ReportsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -61,6 +76,13 @@ export interface ReportsModalProps {
   products: Product[];
   currentUser?: any;
 }
+
+const getLocalDateString = (d: Date = new Date()): string => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 export function ReportsModal({
   isOpen,
@@ -79,28 +101,24 @@ export function ReportsModal({
   const [repairsList, setRepairsList] = useState<RepairJob[]>([]);
   const [expensesList, setExpensesList] = useState<ReportExpense[]>([]);
   const [notesList, setNotesList] = useState<ReportNote[]>([]);
+  const [loanPaymentsList, setLoanPaymentsList] = useState<ReportLoanPayment[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
 
-  // Financial Adjustments State (Cash In / Cash Out)
+  // Financial Adjustments State (Cash In / Cash Out / Loans)
   const includeExpenses = false;
   const [includeCashIn, setIncludeCashIn] = useState<boolean>(true);
   const [includeCashOut, setIncludeCashOut] = useState<boolean>(true);
+  const [includeLoans, setIncludeLoans] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<"summary" | "detailed">("summary");
   const [activeSubView, setActiveSubView] = useState<"sales" | "expenses" | "cash_in_out" | "all">("sales");
 
-  // Filters State
+  // Filters State (Defaults to local today)
   const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "last7" | "thisMonth" | "all" | "custom">("today");
-  const [startDate, setStartDate] = useState<string>(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString().split("T")[0];
-  });
-  const [endDate, setEndDate] = useState<string>(() => {
-    return new Date().toISOString().split("T")[0];
-  });
+  const [startDate, setStartDate] = useState<string>(() => getLocalDateString());
+  const [endDate, setEndDate] = useState<string>(() => getLocalDateString());
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>("all");
   const [minPrice, setMinPrice] = useState<string>("");
@@ -113,7 +131,7 @@ export function ReportsModal({
   const handleDatePresetChange = (preset: "today" | "yesterday" | "last7" | "thisMonth" | "all" | "custom") => {
     setDatePreset(preset);
     const now = new Date();
-    const todayStr = now.toISOString().split("T")[0];
+    const todayStr = getLocalDateString(now);
 
     if (preset === "today") {
       setStartDate(todayStr);
@@ -121,17 +139,17 @@ export function ReportsModal({
     } else if (preset === "yesterday") {
       const y = new Date();
       y.setDate(y.getDate() - 1);
-      const yStr = y.toISOString().split("T")[0];
+      const yStr = getLocalDateString(y);
       setStartDate(yStr);
       setEndDate(yStr);
     } else if (preset === "last7") {
       const w = new Date();
       w.setDate(w.getDate() - 6);
-      setStartDate(w.toISOString().split("T")[0]);
+      setStartDate(getLocalDateString(w));
       setEndDate(todayStr);
     } else if (preset === "thisMonth") {
       const m = new Date(now.getFullYear(), now.getMonth(), 1);
-      setStartDate(m.toISOString().split("T")[0]);
+      setStartDate(getLocalDateString(m));
       setEndDate(todayStr);
     } else if (preset === "all") {
       setStartDate("");
@@ -144,33 +162,38 @@ export function ReportsModal({
     setLoading(true);
     setErrorMsg("");
     try {
-      // 1. Fetch Sales, Expenses, and Notes for the date range
+      // 1. Fetch Sales, Expenses, Notes, and Loan Payments for the date range
       let salesQuery = "/sales?limit=3000";
       let expQuery = "/expenses?limit=1500";
       let notesQuery = "/notes?limit=1500";
+      let repairsQuery = "/repairs?limit=1500";
+      let loansQuery = "/loan-payments?limit=1500";
 
       if (startDate) {
-        const s = new Date(startDate);
-        s.setHours(0, 0, 0, 0);
+        const s = new Date(startDate + "T00:00:00");
         const sIso = s.toISOString();
         salesQuery += `&startDate=${encodeURIComponent(sIso)}`;
         expQuery += `&startDate=${encodeURIComponent(sIso)}`;
         notesQuery += `&startDate=${encodeURIComponent(sIso)}`;
+        repairsQuery += `&startDate=${encodeURIComponent(sIso)}`;
+        loansQuery += `&startDate=${encodeURIComponent(sIso)}`;
       }
       if (endDate) {
-        const e = new Date(endDate);
-        e.setHours(23, 59, 59, 999);
+        const e = new Date(endDate + "T23:59:59.999");
         const eIso = e.toISOString();
         salesQuery += `&endDate=${encodeURIComponent(eIso)}`;
         expQuery += `&endDate=${encodeURIComponent(eIso)}`;
         notesQuery += `&endDate=${encodeURIComponent(eIso)}`;
+        repairsQuery += `&endDate=${encodeURIComponent(eIso)}`;
+        loansQuery += `&endDate=${encodeURIComponent(eIso)}`;
       }
 
-      const [salesRes, repairsRes, expRes, notesRes] = await Promise.all([
+      const [salesRes, repairsRes, expRes, notesRes, loansRes] = await Promise.all([
         api<any>(salesQuery),
-        api<any>("/repairs?limit=1500"),
+        api<any>(repairsQuery).catch(() => api<any>("/repairs?limit=1500")),
         api<any>(expQuery).catch(() => ({ status: "error", data: { expenses: [] } })),
         api<any>(notesQuery).catch(() => ({ status: "error", data: { notes: [] } })),
+        api<any>(loansQuery).catch(() => ({ status: "error", data: { payments: [] } })),
       ]);
 
       if (salesRes.status === "success" && Array.isArray(salesRes.data?.sales)) {
@@ -195,6 +218,12 @@ export function ReportsModal({
         setNotesList(notesRes.data.notes);
       } else {
         setNotesList([]);
+      }
+
+      if (loansRes.status === "success" && Array.isArray(loansRes.data?.payments)) {
+        setLoanPaymentsList(loansRes.data.payments);
+      } else {
+        setLoanPaymentsList([]);
       }
     } catch (err: any) {
       console.error("Failed to fetch reports data:", err);
@@ -253,6 +282,19 @@ export function ReportsModal({
         return false;
       }
 
+      // Date Range Filter (inclusive)
+      if (startDate || endDate) {
+        const sDate = new Date(sale.createdAt);
+        if (startDate) {
+          const s = new Date(startDate + "T00:00:00");
+          if (sDate < s) return false;
+        }
+        if (endDate) {
+          const e = new Date(endDate + "T23:59:59.999");
+          if (sDate > e) return false;
+        }
+      }
+
       // 1. Status Filter
       if (selectedStatus !== "all") {
         if (sale.status !== selectedStatus) return false;
@@ -306,7 +348,7 @@ export function ReportsModal({
 
       return true;
     });
-  }, [salesList, selectedStatus, selectedPaymentMethod, minPrice, maxPrice, selectedCategoryId, searchQuery, productCategoryMap]);
+  }, [salesList, startDate, endDate, selectedStatus, selectedPaymentMethod, minPrice, maxPrice, selectedCategoryId, searchQuery, productCategoryMap]);
 
   // Filtered Repairs Calculation
   const filteredRepairs = useMemo(() => {
@@ -315,13 +357,11 @@ export function ReportsModal({
       if (startDate || endDate) {
         const rDate = new Date(repair.createdAt);
         if (startDate) {
-          const s = new Date(startDate);
-          s.setHours(0, 0, 0, 0);
+          const s = new Date(startDate + "T00:00:00");
           if (rDate < s) return false;
         }
         if (endDate) {
-          const e = new Date(endDate);
-          e.setHours(23, 59, 59, 999);
+          const e = new Date(endDate + "T23:59:59.999");
           if (rDate > e) return false;
         }
       }
@@ -434,6 +474,17 @@ export function ReportsModal({
   const filteredExpenses = useMemo(() => {
     return expensesList.filter((exp) => {
       if (exp.status === "CANCELLED") return false;
+      if (startDate || endDate) {
+        const eDate = new Date(exp.createdAt);
+        if (startDate) {
+          const s = new Date(startDate + "T00:00:00");
+          if (eDate < s) return false;
+        }
+        if (endDate) {
+          const e = new Date(endDate + "T23:59:59.999");
+          if (eDate > e) return false;
+        }
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         return (
@@ -444,12 +495,23 @@ export function ReportsModal({
       }
       return true;
     });
-  }, [expensesList, searchQuery]);
+  }, [expensesList, startDate, endDate, searchQuery]);
 
   // Filtered Notes (Cash In / Out) Calculation
   const filteredNotes = useMemo(() => {
     return notesList.filter((nt) => {
       if (nt.status === "CANCELLED") return false;
+      if (startDate || endDate) {
+        const nDate = new Date(nt.createdAt);
+        if (startDate) {
+          const s = new Date(startDate + "T00:00:00");
+          if (nDate < s) return false;
+        }
+        if (endDate) {
+          const e = new Date(endDate + "T23:59:59.999");
+          if (nDate > e) return false;
+        }
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         return (
@@ -460,7 +522,38 @@ export function ReportsModal({
       }
       return true;
     });
-  }, [notesList, searchQuery]);
+  }, [notesList, startDate, endDate, searchQuery]);
+
+  // Filtered Loan Payments (Repayments) Calculation
+  const filteredLoanPayments = useMemo(() => {
+    return loanPaymentsList.filter((lp) => {
+      if (startDate || endDate) {
+        const pDate = new Date(lp.paymentDate || lp.createdAt || 0);
+        if (startDate) {
+          const s = new Date(startDate + "T00:00:00");
+          if (pDate < s) return false;
+        }
+        if (endDate) {
+          const e = new Date(endDate + "T23:59:59.999");
+          if (pDate > e) return false;
+        }
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const pNo = (lp.paymentNo || "").toLowerCase();
+        const notes = (lp.notes || "").toLowerCase();
+        const loanTitle = typeof lp.loan === "object" && lp.loan ? (lp.loan.title || "").toLowerCase() : "";
+        return pNo.includes(q) || notes.includes(q) || loanTitle.includes(q);
+      }
+      return true;
+    });
+  }, [loanPaymentsList, startDate, endDate, searchQuery]);
+
+  const loansPaidTotal = useMemo(() => {
+    return filteredLoanPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  }, [filteredLoanPayments]);
+
+  const loansPaidCount = filteredLoanPayments.length;
 
   // Financial Adjustment Totals
   const expenseTotal = useMemo(() => {
@@ -493,6 +586,7 @@ export function ReportsModal({
   // Net Revenue Calculation:
   // When Cash In is selected -> add cash in (+)
   // When Cash Out is selected -> deduct cash out (-)
+  // When Loans is selected -> deduct loans paid (-)
   const netRevenue = useMemo(() => {
     let net = salesMetrics.totalAmount;
     if (includeCashIn) {
@@ -501,8 +595,11 @@ export function ReportsModal({
     if (includeCashOut) {
       net -= cashOutTotal;
     }
+    if (includeLoans) {
+      net -= loansPaidTotal;
+    }
     return net;
-  }, [salesMetrics.totalAmount, includeCashIn, includeCashOut, cashInTotal, cashOutTotal]);
+  }, [salesMetrics.totalAmount, includeCashIn, includeCashOut, includeLoans, cashInTotal, cashOutTotal, loansPaidTotal]);
 
   // Trigger Print A4 Business Report
   const handlePrintBusinessReport = async () => {
@@ -533,13 +630,16 @@ export function ReportsModal({
         includeExpenses: activeTab === "sales" ? includeExpenses : false,
         includeCashIn: activeTab === "sales" ? includeCashIn : false,
         includeCashOut: activeTab === "sales" ? includeCashOut : false,
-        includeCashInOut: activeTab === "sales" ? (includeCashIn || includeCashOut) : false,
+        includeLoans: activeTab === "sales" ? includeLoans : false,
+        includeCashInOut: activeTab === "sales" ? (includeCashIn || includeCashOut || includeLoans) : false,
         viewMode: viewMode,
         expenses: filteredExpenses,
         notes: visibleNotes,
+        loans: filteredLoanPayments,
         expenseTotal: expenseTotal,
         cashInTotal: cashInTotal,
         cashOutTotal: cashOutTotal,
+        loansPaidTotal: loansPaidTotal,
         netRevenue: netRevenue,
         summaryMetrics: activeTab === "repairs" ? repairsMetrics : {
           ...salesMetrics,
@@ -547,6 +647,7 @@ export function ReportsModal({
           totalExpenses: expenseTotal,
           totalCashIn: cashInTotal,
           totalCashOut: cashOutTotal,
+          totalLoansPaid: loansPaidTotal,
           netRevenue: netRevenue,
         },
         user: currentUser,
@@ -591,13 +692,16 @@ export function ReportsModal({
         includeExpenses: activeTab === "sales" ? includeExpenses : false,
         includeCashIn: activeTab === "sales" ? includeCashIn : false,
         includeCashOut: activeTab === "sales" ? includeCashOut : false,
-        includeCashInOut: activeTab === "sales" ? (includeCashIn || includeCashOut) : false,
+        includeLoans: activeTab === "sales" ? includeLoans : false,
+        includeCashInOut: activeTab === "sales" ? (includeCashIn || includeCashOut || includeLoans) : false,
         viewMode: viewMode,
         expenses: filteredExpenses,
         notes: visibleNotes,
+        loans: filteredLoanPayments,
         expenseTotal: expenseTotal,
         cashInTotal: cashInTotal,
         cashOutTotal: cashOutTotal,
+        loansPaidTotal: loansPaidTotal,
         netRevenue: netRevenue,
         summaryMetrics: activeTab === "repairs" ? repairsMetrics : {
           ...salesMetrics,
@@ -605,6 +709,7 @@ export function ReportsModal({
           totalExpenses: expenseTotal,
           totalCashIn: cashInTotal,
           totalCashOut: cashOutTotal,
+          totalLoansPaid: loansPaidTotal,
           netRevenue: netRevenue,
         },
         user: currentUser,
@@ -880,6 +985,7 @@ export function ReportsModal({
                 className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40 cursor-pointer"
               >
                 <option value="all">All Methods</option>
+                <option value="KOKO">Koko Pay</option>
                 <option value="CASH">Cash</option>
                 <option value="CARD">Card</option>
                 <option value="BANK_TRANSFER">Bank Transfer</option>
@@ -899,6 +1005,7 @@ export function ReportsModal({
                 {activeTab === "sales" ? (
                   <>
                     <option value="COMPLETED">Completed</option>
+                    <option value="PENDING">Pending (Koko / Credit)</option>
                     <option value="CANCELLED">Cancelled</option>
                     <option value="VOIDED">Voided</option>
                   </>
@@ -989,6 +1096,31 @@ export function ReportsModal({
                 </span>
                 {includeCashOut && <Check className="w-3.5 h-3.5 text-rose-600 stroke-[3]" />}
               </button>
+
+              {/* LOANS PAID BUTTON (Default Selected) */}
+              <button
+                type="button"
+                onClick={() => setIncludeLoans((prev) => !prev)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                  includeLoans
+                    ? "bg-purple-50 text-purple-900 border-purple-300 shadow-2xs ring-1 ring-purple-400/40"
+                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                title="Deduct total loan repayments (-) from revenue"
+              >
+                <CreditCard className={`w-3.5 h-3.5 ${includeLoans ? "text-purple-600" : "text-slate-400"}`} />
+                <span>Loans</span>
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                    includeLoans
+                      ? "bg-purple-600 text-white"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  - Rs. {loansPaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                {includeLoans && <Check className="w-3.5 h-3.5 text-purple-600 stroke-[3]" />}
+              </button>
             </div>
 
             {/* TWO OPTIONS: Summary (Totals Only) vs Itemized (One-by-One with Values) */}
@@ -1042,18 +1174,18 @@ export function ReportsModal({
               </div>
 
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl shadow-2xs border ${
-                includeCashIn || includeCashOut
+                includeCashIn || includeCashOut || includeLoans
                   ? "bg-white border-slate-200"
                   : "bg-emerald-50/60 border-emerald-200"
               }`}>
                 <div className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-xs ${
-                  includeCashIn || includeCashOut ? "bg-slate-100 text-slate-700" : "bg-emerald-100 text-emerald-700"
+                  includeCashIn || includeCashOut || includeLoans ? "bg-slate-100 text-slate-700" : "bg-emerald-100 text-emerald-700"
                 }`}>
                   Rs
                 </div>
                 <div>
                   <div className="text-[10px] text-slate-400 uppercase font-bold">
-                    {includeCashIn || includeCashOut ? "Gross Sales" : "Total Revenue"}
+                    {includeCashIn || includeCashOut || includeLoans ? "Gross Sales" : "Total Revenue"}
                   </div>
                   <div className="text-xs font-black text-slate-800">
                     Rs. {salesMetrics.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1097,8 +1229,26 @@ export function ReportsModal({
                 </div>
               )}
 
+              {/* Loans Paid KPI Card */}
+              {includeLoans && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50/70 border border-purple-200 rounded-xl shadow-2xs">
+                  <div className="w-6 h-6 rounded-md bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-xs">
+                    <CreditCard className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-purple-700 uppercase font-bold flex items-center gap-1">
+                      <span>Loans</span>
+                      <span className="text-[9px] px-1 bg-purple-200 text-purple-900 rounded font-black">{loansPaidCount}</span>
+                    </div>
+                    <div className="text-xs font-black text-purple-900">
+                      - Rs. {loansPaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Adjusted Net Revenue KPI Card */}
-              {(includeCashIn || includeCashOut) && (
+              {(includeCashIn || includeCashOut || includeLoans) && (
                 <div className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-xl shadow-sm border border-emerald-500">
                   <div className="w-6 h-6 rounded-md bg-white/20 text-white flex items-center justify-center font-bold text-xs">
                     Rs
@@ -1342,13 +1492,21 @@ export function ReportsModal({
                                 </div>
                               </td>
                               <td className="py-2.5 px-3">
-                                <span className="font-bold text-slate-700 text-[11px]">{method}</span>
+                                {method === "KOKO" ? (
+                                  <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
+                                    Koko Pay
+                                  </span>
+                                ) : (
+                                  <span className="font-bold text-slate-700 text-[11px]">{method}</span>
+                                )}
                               </td>
                               <td className="py-2.5 px-3 text-center">
                                 <span
                                   className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                                     status === "COMPLETED"
                                       ? "bg-emerald-100 text-emerald-800"
+                                      : status === "PENDING"
+                                      ? "bg-amber-100 text-amber-800 border border-amber-200"
                                       : status === "CANCELLED" || status === "VOIDED" || status === "VOID"
                                       ? "bg-rose-100 text-rose-800"
                                       : status === "FULL_RETURN" || status === "PARTIAL_RETURN" || status === "RETURNED"
@@ -1530,14 +1688,98 @@ export function ReportsModal({
                 </div>
               )}
 
+              {/* TABLE 4: Itemized Loan Repayments Table (Shown in detailed view when includeLoans is enabled) */}
+              {includeLoans && (activeSubView === "cash_in_out" || activeSubView === "all") && (
+                <div className="bg-white rounded-xl border border-purple-200 overflow-hidden shadow-2xs">
+                  <div className="px-4 py-2.5 bg-purple-50 border-b border-purple-200 flex items-center justify-between">
+                    <span className="text-xs font-extrabold uppercase text-purple-950 flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-purple-600" />
+                      Itemized Loan Repayments ({filteredLoanPayments.length} entries)
+                    </span>
+                    <span className="text-xs font-black text-purple-800">
+                      Total Repaid: - Rs. {loansPaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  {filteredLoanPayments.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      <CreditCard className="w-7 h-7 mx-auto mb-1 text-slate-300" />
+                      <p className="font-bold text-slate-600">No loan payments recorded for this period</p>
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#2e1065] text-white text-[11px] uppercase tracking-wider font-bold">
+                        <tr>
+                          <th className="py-2 px-3 w-10 text-center">#</th>
+                          <th className="py-2 px-3">Date & Time</th>
+                          <th className="py-2 px-3">Payment #</th>
+                          <th className="py-2 px-3">Loan Profile</th>
+                          <th className="py-2 px-3 text-right">Daily Rate Snapshot</th>
+                          <th className="py-2 px-3">Method</th>
+                          <th className="py-2 px-3">Notes</th>
+                          <th className="py-2 px-3 text-right">Amount Paid (Rs.)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-purple-50 text-slate-700">
+                        {filteredLoanPayments.map((lp, idx) => {
+                          const pDate = lp.paymentDate || lp.createdAt
+                            ? new Date(lp.paymentDate || lp.createdAt!).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) + " " +
+                              new Date(lp.paymentDate || lp.createdAt!).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+                            : "-";
+                          const amt = Number(lp.amount || 0);
+                          const dailyRate = Number(lp.dailyPayingAmount || 0);
+                          const loanObj = typeof lp.loan === "object" && lp.loan !== null ? lp.loan : undefined;
+                          const loanTitle = loanObj?.title || lp.loanTitle || (typeof lp.loan === 'string' ? lp.loan : 'Loan');
+                          const loanNum = loanObj?.loanNo || "";
+
+                          return (
+                            <tr key={lp._id || idx} className="hover:bg-purple-50/50 transition-colors">
+                              <td className="py-2.5 px-3 text-center font-bold text-purple-400">{idx + 1}</td>
+                              <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{pDate}</td>
+                              <td className="py-2.5 px-3 font-extrabold text-purple-900">{lp.paymentNo || "-"}</td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-800">
+                                <div>{loanTitle}</div>
+                                {loanNum && <span className="text-[10px] text-slate-400 font-mono">{loanNum}</span>}
+                              </td>
+                              <td className="py-2.5 px-3 text-right text-slate-600 font-medium">
+                                Rs. {dailyRate.toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-3 font-medium uppercase text-[11px] text-slate-600">
+                                {lp.paymentMethod || "CASH"}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-500 italic max-w-[150px] truncate">
+                                {lp.notes || "-"}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-black text-purple-700">
+                                - Rs. {amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-purple-50/70 font-bold border-t border-purple-200 text-slate-800">
+                        <tr>
+                          <td colSpan={7} className="py-2.5 px-3 text-right font-black uppercase text-[11px]">
+                            Total Loan Deductions:
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-black text-xs text-purple-800">
+                            - Rs. {loansPaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+              )}
+
               {/* SUMMARY MODE RECONCILIATION CARD (Shown when viewMode === "summary" and adjustments active) */}
-              {viewMode === "summary" && (includeCashIn || includeCashOut) && (
+              {viewMode === "summary" && (includeCashIn || includeCashOut || includeLoans) && (
                 <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-2">
                   <div className="text-xs font-black uppercase tracking-wider text-slate-800 border-b border-slate-100 pb-1.5 flex items-center justify-between">
                     <span>Summary Financial Reconciliation</span>
                     <span className="text-[10px] text-slate-400 font-bold">Totals Only View</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 pt-1">
                     <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                       <div className="text-[10px] text-slate-500 font-bold uppercase">Gross Sales Subtotal</div>
                       <div className="text-xs font-black text-slate-800 mt-0.5">
@@ -1559,6 +1801,15 @@ export function ReportsModal({
                         <div className="text-[10px] text-rose-700 font-bold uppercase">Total Cash Out Deducted</div>
                         <div className="text-xs font-black text-rose-800 mt-0.5">
                           - Rs. {cashOutTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    )}
+
+                    {includeLoans && (
+                      <div className="p-2.5 bg-purple-50 rounded-lg border border-purple-200">
+                        <div className="text-[10px] text-purple-700 font-bold uppercase">Total Loans Repaid</div>
+                        <div className="text-xs font-black text-purple-800 mt-0.5">
+                          - Rs. {loansPaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
                     )}
@@ -1658,10 +1909,10 @@ export function ReportsModal({
             Active view: <span className="font-bold text-slate-800">{activeTab === "sales" ? "Sales & Revenue" : "Device Repairs"}</span>
             {" • "}
             Date period: <span className="font-bold text-slate-800">{datePreset.toUpperCase()}</span>
-            {activeTab === "sales" && (includeCashIn || includeCashOut) && (
+            {activeTab === "sales" && (includeCashIn || includeCashOut || includeLoans) && (
               <>
                 {" • "}
-                Adjustments: <span className="font-bold text-slate-800">{[includeCashIn ? "Cash In (+)" : null, includeCashOut ? "Cash Out (-)" : null].filter(Boolean).join(" & ")} ({viewMode === "detailed" ? "Itemized" : "Totals Only"})</span>
+                Adjustments: <span className="font-bold text-slate-800">{[includeCashIn ? "Cash In (+)" : null, includeCashOut ? "Cash Out (-)" : null, includeLoans ? "Loans (-)" : null].filter(Boolean).join(" & ")} ({viewMode === "detailed" ? "Itemized" : "Totals Only"})</span>
               </>
             )}
           </div>

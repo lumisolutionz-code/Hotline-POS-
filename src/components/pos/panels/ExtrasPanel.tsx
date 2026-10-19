@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
-import { Plus, X, Search, Trash2, Loader2, ArrowUpRight, ArrowDownRight, BookOpen } from "lucide-react";
+import { Plus, X, Search, Trash2, Loader2, ArrowUpRight, ArrowDownRight, BookOpen, CreditCard } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "../../../lib/api";
 import { PermissionOverrideModal } from "../modals/PermissionOverrideModal";
+import { LoansView, type LoansSummaryData } from "./LoansPanel";
 
 export interface LedgerNote {
   _id: string;
@@ -12,19 +13,35 @@ export interface LedgerNote {
   type: "+" | "-";
   status: string;
   createdAt: string;
+  updatedAt?: string;
   createdBy?: {
     _id: string;
     username: string;
+    name?: string;
+  };
+  updatedBy?: {
+    _id: string;
+    username: string;
+    name?: string;
   };
 }
 
 interface ExtrasPanelProps {
   onClose: () => void;
-  initialTab?: "all" | "in" | "out";
+  initialTab?: "all" | "in" | "out" | "loans";
 }
 
 export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): JSX.Element {
-  const [filterType, setFilterType] = useState<"all" | "in" | "out">(initialTab);
+  const [filterType, setFilterType] = useState<"all" | "in" | "out" | "loans">(initialTab);
+  const [activeLoansCount, setActiveLoansCount] = useState<number>(0);
+  const [loansSummary, setLoansSummary] = useState<LoansSummaryData>({
+    totalLoaned: 0,
+    totalPaid: 0,
+    totalDue: 0,
+    activeCount: 0,
+    completedCount: 0,
+    totalProfiles: 0,
+  });
 
   // --- Notes (Ledger) State ---
   const [notes, setNotes] = useState<LedgerNote[]>([]);
@@ -61,6 +78,37 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
 
   useEffect(() => {
     fetchNotes();
+    apiGet<{ status: string; data?: { loans: any[] } }>("/loans")
+      .then((res) => {
+        if (res.status === "success" && Array.isArray(res.data?.loans)) {
+          const lList = res.data.loans;
+          const active = lList.filter((l: any) => l.status === "ACTIVE").length;
+          setActiveLoansCount(active);
+          let totalLoaned = 0;
+          let totalPaid = 0;
+          let totalDue = 0;
+          let activeCount = 0;
+          let completedCount = 0;
+          lList.forEach((l: any) => {
+            if (l.status !== "CANCELLED") {
+              totalLoaned += Number(l.amount || 0);
+              totalPaid += Number(l.paidAmount || 0);
+              totalDue += Number(l.dueAmount || 0);
+              if (l.status === "ACTIVE") activeCount++;
+              if (l.status === "COMPLETED") completedCount++;
+            }
+          });
+          setLoansSummary({
+            totalLoaned,
+            totalPaid,
+            totalDue,
+            activeCount,
+            completedCount,
+            totalProfiles: lList.length,
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Submit Note (Cash In or Cash Out)
@@ -168,7 +216,7 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
   }, [notes, filterType, search]);
 
   return (
-    <div className="fixed inset-y-0 right-0 w-full md:w-[640px] bg-slate-50 dark:bg-slate-900 shadow-2xl z-50 flex flex-col transform transition-transform duration-300 border-l border-slate-200 dark:border-slate-800">
+    <div className="fixed inset-y-0 right-0 w-full md:w-[700px] xl:w-[740px] bg-slate-50 dark:bg-slate-900 shadow-2xl z-50 flex flex-col transform transition-transform duration-300 border-l border-slate-200 dark:border-slate-800">
       {/* Header */}
       <div className="bg-[#0f172a] text-white px-6 pt-4 pb-3 flex flex-col gap-3 border-b border-slate-800 shrink-0">
         <div className="flex items-center justify-between">
@@ -196,44 +244,113 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
           </button>
         </div>
 
-        {/* 3 Metric Mini Cards */}
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
-            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Cash In (+)</span>
-            <div className="text-sm font-extrabold text-emerald-400 font-mono mt-0.5">
-              +Rs. {metrics.totalIn.toLocaleString()}
+        {/* Metric Mini Cards */}
+        {filterType === "loans" ? (
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Total Borrowed</span>
+              <div className="text-sm font-extrabold text-white font-mono mt-0.5">
+                Rs. {loansSummary.totalLoaned.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{loansSummary.totalProfiles} profiles</span>
             </div>
-            <span className="text-[10px] text-slate-400 block">{metrics.inCount} entries</span>
-          </div>
 
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
-            <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">Cash Out (-)</span>
-            <div className="text-sm font-extrabold text-rose-400 font-mono mt-0.5">
-              -Rs. {metrics.totalOut.toLocaleString()}
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Total Repaid</span>
+              <div className="text-sm font-extrabold text-emerald-400 font-mono mt-0.5">
+                Rs. {loansSummary.totalPaid.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-emerald-400/80 block">
+                {loansSummary.totalLoaned > 0 ? ((loansSummary.totalPaid / loansSummary.totalLoaned) * 100).toFixed(1) : 0}% cleared
+              </span>
             </div>
-            <span className="text-[10px] text-slate-400 block">{metrics.outCount} expenses</span>
-          </div>
 
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
-            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Net Balance</span>
-            <div
-              className={`text-sm font-extrabold font-mono mt-0.5 ${
-                metrics.net >= 0 ? "text-blue-400" : "text-amber-400"
-              }`}
-            >
-              {metrics.net >= 0 ? "+Rs. " : "-Rs. "}
-              {Math.abs(metrics.net).toLocaleString()}
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">Remaining Balance</span>
+              <div className="text-sm font-extrabold text-rose-400 font-mono mt-0.5">
+                Rs. {loansSummary.totalDue.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-rose-400/80 block">{loansSummary.activeCount} active dues</span>
             </div>
-            <span className="text-[10px] text-slate-400 block">{notes.length} total records</span>
           </div>
-        </div>
+        ) : loansSummary.totalPaid > 0 ? (
+          <div className="grid grid-cols-4 gap-2 pt-1">
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Cash In (+)</span>
+              <div className="text-sm font-extrabold text-emerald-400 font-mono mt-0.5">
+                +Rs. {metrics.totalIn.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{metrics.inCount} entries</span>
+            </div>
+
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">Cash Out (-)</span>
+              <div className="text-sm font-extrabold text-rose-400 font-mono mt-0.5">
+                -Rs. {metrics.totalOut.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{metrics.outCount} expenses</span>
+            </div>
+
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider block">Loans Paid (-)</span>
+              <div className="text-sm font-extrabold text-purple-400 font-mono mt-0.5">
+                -Rs. {loansSummary.totalPaid.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-purple-400/80 block">{loansSummary.activeCount} active loans</span>
+            </div>
+
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Net Balance</span>
+              <div
+                className={`text-sm font-extrabold font-mono mt-0.5 ${
+                  (metrics.net - loansSummary.totalPaid) >= 0 ? "text-blue-400" : "text-amber-400"
+                }`}
+              >
+                {(metrics.net - loansSummary.totalPaid) >= 0 ? "+Rs. " : "-Rs. "}
+                {Math.abs(metrics.net - loansSummary.totalPaid).toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{notes.length} total records</span>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Cash In (+)</span>
+              <div className="text-sm font-extrabold text-emerald-400 font-mono mt-0.5">
+                +Rs. {metrics.totalIn.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{metrics.inCount} entries</span>
+            </div>
+
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">Cash Out (-)</span>
+              <div className="text-sm font-extrabold text-rose-400 font-mono mt-0.5">
+                -Rs. {metrics.totalOut.toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{metrics.outCount} expenses</span>
+            </div>
+
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Net Balance</span>
+              <div
+                className={`text-sm font-extrabold font-mono mt-0.5 ${
+                  metrics.net >= 0 ? "text-blue-400" : "text-amber-400"
+                }`}
+              >
+                {metrics.net >= 0 ? "+Rs. " : "-Rs. "}
+                {Math.abs(metrics.net).toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 block">{notes.length} total records</span>
+            </div>
+          </div>
+        )}
 
         {/* Filter Tabs */}
-        <div className="flex items-center gap-1.5 border-b border-slate-800 pt-1">
+        <div className="flex items-center gap-1.5 border-b border-slate-800 pt-1 overflow-x-auto scrollbar-none">
           <button
             type="button"
             onClick={() => setFilterType("all")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 shrink-0 ${
               filterType === "all"
                 ? "border-teal-500 text-teal-400 bg-slate-800/80"
                 : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
@@ -248,7 +365,7 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
           <button
             type="button"
             onClick={() => setFilterType("out")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 shrink-0 ${
               filterType === "out"
                 ? "border-rose-500 text-rose-400 bg-slate-800/80"
                 : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
@@ -264,7 +381,7 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
           <button
             type="button"
             onClick={() => setFilterType("in")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 shrink-0 ${
               filterType === "in"
                 ? "border-emerald-500 text-emerald-400 bg-slate-800/80"
                 : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
@@ -276,11 +393,37 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
               {metrics.inCount}
             </span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setFilterType("loans")}
+            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-b-2 shrink-0 ${
+              filterType === "loans"
+                ? "border-purple-500 text-purple-400 bg-slate-800/80"
+                : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
+            }`}
+          >
+            <CreditCard className="w-3.5 h-3.5 text-purple-400" />
+            <span>Loans</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-purple-950 text-purple-300 border border-purple-800">
+              {activeLoansCount}
+            </span>
+          </button>
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="p-3.5 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50 flex gap-2.5 shrink-0">
+      {filterType === "loans" ? (
+        <LoansView
+          hideOverview={true}
+          onSummaryChange={(s) => {
+            setLoansSummary(s);
+            setActiveLoansCount(s.activeCount);
+          }}
+        />
+      ) : (
+        <>
+          {/* Toolbar */}
+          <div className="p-3.5 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50 flex gap-2.5 shrink-0">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
@@ -349,6 +492,14 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
                     <span>{new Date(note.createdAt).toLocaleDateString()}</span>
                     <span>•</span>
                     <span>{note.createdBy?.username || "Cashier"}</span>
+                    {note.updatedBy?.username && note.updatedAt && note.updatedAt !== note.createdAt && (
+                      <>
+                        <span>•</span>
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                          (Edited by {note.updatedBy.username})
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -384,6 +535,8 @@ export function ExtrasPanel({ onClose, initialTab = "all" }: ExtrasPanelProps): 
           })
         )}
       </div>
+    </>
+  )}
 
       {/* ADD ENTRY MODAL */}
       {showAddModal && (

@@ -15,6 +15,7 @@ import {
   Smartphone,
   PlusCircle,
   Sparkles,
+  Check,
 } from "lucide-react";
 import { api, downloadBackupArchive } from "../../../lib/api";
 
@@ -239,6 +240,8 @@ export function CashDrawerModal({
   const [isFinishingSession, setIsFinishingSession] = useState<boolean>(false);
   const [finishStepText, setFinishStepText] = useState<string>("");
   const [finishProgress, setFinishProgress] = useState<number>(0);
+  const [closedSessionResult, setClosedSessionResult] = useState<CashSessionData | null>(null);
+  const [backupSavedPath, setBackupSavedPath] = useState<string>("");
 
   // START SESSION
   const handleStartSession = async () => {
@@ -351,11 +354,13 @@ export function CashDrawerModal({
       setFinishStepText("Exporting MongoDB collections & compressing archive...");
       setFinishProgress(55);
 
+      let savedFilename = "";
       try {
         const backupData = await downloadBackupArchive("SESSION_CLOSE", 12000);
         if (backupData) {
           setFinishStepText("Writing backup archive to storage destination...");
           setFinishProgress(85);
+          savedFilename = backupData.filename;
 
           if (window.ipcRenderer) {
             await window.ipcRenderer.invoke("save_backup_archive", {
@@ -368,13 +373,12 @@ export function CashDrawerModal({
         console.warn("[Session Close Backup] Skipped backup:", backupErr);
       }
 
-      setFinishStepText("Shift session complete. Redirecting to login...");
+      setFinishStepText("Shift session complete & backup secured.");
       setFinishProgress(100);
-
-      setTimeout(() => {
-        onSessionClosed(closedSessionData);
-        onClose();
-      }, 700);
+      setBackupSavedPath(savedFilename);
+      setClosedSessionResult(closedSessionData);
+      setIsFinishingSession(false);
+      setSubmitting(false);
     } catch (err: any) {
       setIsFinishingSession(false);
       setError(err?.message || "Failed to communicate with server.");
@@ -391,7 +395,9 @@ export function CashDrawerModal({
           <div className="flex items-center gap-3">
             <div
               className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm shrink-0 ${
-                isFinishingSession
+                closedSessionResult
+                  ? "bg-emerald-600"
+                  : isFinishingSession
                   ? "bg-indigo-600"
                   : currentMode === "OPEN"
                   ? "bg-emerald-600"
@@ -400,7 +406,9 @@ export function CashDrawerModal({
                   : "bg-blue-600"
               }`}
             >
-              {isFinishingSession ? (
+              {closedSessionResult ? (
+                <CheckCircle2 className="w-5 h-5 text-white" />
+              ) : isFinishingSession ? (
                 <Database className="w-5 h-5 animate-pulse" />
               ) : currentMode === "OPEN" ? (
                 <Unlock className="w-5 h-5" />
@@ -413,7 +421,9 @@ export function CashDrawerModal({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white tracking-tight">
-                  {isFinishingSession
+                  {closedSessionResult
+                    ? "Session Closed & Backup Complete"
+                    : isFinishingSession
                     ? "Backing Up & Closing Session"
                     : currentMode === "OPEN"
                     ? "Day Opening - Cash Drawer & Reload SIM Float"
@@ -423,7 +433,9 @@ export function CashDrawerModal({
                 </h2>
                 <span
                   className={`px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase border ${
-                    isFinishingSession
+                    closedSessionResult
+                      ? "bg-emerald-950 text-emerald-400 border-emerald-800"
+                      : isFinishingSession
                       ? "bg-indigo-950 text-indigo-400 border-indigo-800"
                       : currentMode === "OPEN"
                       ? "bg-emerald-950 text-emerald-400 border-emerald-800"
@@ -432,11 +444,13 @@ export function CashDrawerModal({
                       : "bg-blue-950 text-blue-400 border-blue-800"
                   }`}
                 >
-                  {isFinishingSession ? "BACKUP" : currentMode === "OPEN" ? "START FLOAT" : currentMode === "CLOSE" ? "DAY CLOSE" : "ACTIVE"}
+                  {closedSessionResult ? "SUCCESS" : isFinishingSession ? "BACKUP" : currentMode === "OPEN" ? "START FLOAT" : currentMode === "CLOSE" ? "DAY CLOSE" : "ACTIVE"}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                {isFinishingSession
+                {closedSessionResult
+                  ? "Database archive secured. Click OK below to return to the login screen."
+                  : isFinishingSession
                   ? "Archiving collections to backup folder before logging out"
                   : currentMode === "OPEN"
                   ? "Enter starting cash in drawer and SIM balances on reload machines"
@@ -446,7 +460,7 @@ export function CashDrawerModal({
               </p>
             </div>
           </div>
-          {!isFinishingSession && (
+          {!isFinishingSession && !closedSessionResult && (
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
@@ -459,8 +473,74 @@ export function CashDrawerModal({
 
         {/* Modal Body */}
         <div className="p-5 overflow-y-auto space-y-4">
-          {/* BACKUP & CLOSING PROGRESS OVERLAY */}
-          {isFinishingSession ? (
+          {/* BACKUP & CLOSING SUCCESS OR PROGRESS OVERLAY */}
+          {closedSessionResult ? (
+            <div className="py-6 px-4 flex flex-col items-center justify-center text-center space-y-5 animate-in fade-in duration-200">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-md border border-emerald-200">
+                <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-bold text-slate-800">
+                  Session Closed & Backup Successful!
+                </h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  The cash drawer session has been successfully closed and recorded. A full database backup archive was generated and saved securely.
+                </p>
+              </div>
+
+              {/* Summary card */}
+              <div className="w-full max-w-md bg-slate-50 rounded-xl p-4 border border-slate-200 text-left space-y-2 text-xs">
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Closing Drawer Cash:</span>
+                  <span className="font-bold text-slate-800">{formatCurrency(closedSessionResult.closingAmount || parsedClosing)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Expected Closing Cash:</span>
+                  <span className="font-semibold text-slate-700">{formatCurrency(closedSessionResult.expectedClosingAmount || currentExpectedClosing)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Drawer Difference:</span>
+                  <span className={`font-bold ${
+                    (closedSessionResult.closingDifference ?? closingDiff) === 0
+                      ? "text-emerald-600"
+                      : (closedSessionResult.closingDifference ?? closingDiff) > 0
+                      ? "text-blue-600"
+                      : "text-rose-600"
+                  }`}>
+                    {(closedSessionResult.closingDifference ?? closingDiff) === 0
+                      ? "Balanced (LKR 0.00)"
+                      : formatCurrency(closedSessionResult.closingDifference ?? closingDiff)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1">
+                  <span className="text-slate-500 font-medium">Database Backup:</span>
+                  <span className="font-bold text-emerald-600 flex items-center gap-1">
+                    <Database className="w-3.5 h-3.5" /> Archive Saved Successfully
+                  </span>
+                </div>
+                {backupSavedPath && (
+                  <p className="text-[10px] text-slate-400 font-mono truncate">
+                    File: {backupSavedPath}
+                  </p>
+                )}
+              </div>
+
+              <div className="w-full max-w-md pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSessionClosed(closedSessionResult);
+                    onClose();
+                  }}
+                  className="w-full py-3 px-6 bg-[#0f172a] hover:bg-slate-800 active:scale-[0.99] text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  OK / Proceed to Login
+                </button>
+              </div>
+            </div>
+          ) : isFinishingSession ? (
             <div className="py-8 px-4 flex flex-col items-center justify-center text-center space-y-5 animate-in fade-in duration-200">
               <div className="relative">
                 <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-md border border-blue-200">

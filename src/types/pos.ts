@@ -209,7 +209,7 @@ export interface SalesPanelProps {
   loading: boolean;
   canVoidSale: boolean;
   onClose: () => void;
-  onRefresh: () => void;
+  onRefresh: (filters?: { search?: string; startDate?: string; endDate?: string; status?: string; paymentMethod?: string }) => void;
 }
 
 export interface RepairsPanelProps {

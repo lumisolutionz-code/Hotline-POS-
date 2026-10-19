@@ -821,7 +821,7 @@ export function generateSaleInvoiceHtml(
     invoiceNumber: saleNumber,
     invoiceDate: dateStr,
     dueDate: "Paid in Full",
-    paymentMethod: sale.paymentMethod || "CASH",
+    paymentMethod: sale.paymentMethod === "KOKO" ? "Koko Pay" : (sale.paymentMethod || "CASH"),
     warranty: (sale.items || []).some((it: any) => Boolean(it.showWarranty)) ? (warrantyText || "1 Year Warranty") : undefined,
     isPreprintedPaper: usePreprinted,
     billFrom: {
@@ -1487,6 +1487,7 @@ export function generateSaleBillHtml(
     const raw = String(m || "").trim().toUpperCase();
     if (raw === "CASH") return "Cash";
     if (raw === "CARD") return "Card";
+    if (raw === "KOKO" || raw === "KOKOPAY") return "Koko Pay";
     if (raw === "BANK_TRANSFER" || raw === "BANK") return "Bank Transfer";
     if (raw === "CHEQUE") return "Cheque";
     if (raw === "ONLINE") return "Online";
@@ -3039,12 +3040,15 @@ export interface BusinessReportData {
   includeCashInOut?: boolean;
   includeCashIn?: boolean;
   includeCashOut?: boolean;
+  includeLoans?: boolean;
   viewMode?: "summary" | "detailed";
   expenses?: any[];
   notes?: any[];
+  loans?: any[];
   expenseTotal?: number;
   cashInTotal?: number;
   cashOutTotal?: number;
+  loansPaidTotal?: number;
   netRevenue?: number;
   summaryMetrics?: {
     totalRecords: number;
@@ -3053,6 +3057,7 @@ export interface BusinessReportData {
     totalExpenses?: number;
     totalCashIn?: number;
     totalCashOut?: number;
+    totalLoansPaid?: number;
     netRevenue?: number;
     totalItems?: number;
     totalDiscount?: number;
@@ -3150,7 +3155,8 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
 
   const includeCashIn = data.includeCashIn !== undefined ? !!data.includeCashIn : !!data.includeCashInOut;
   const includeCashOut = data.includeCashOut !== undefined ? !!data.includeCashOut : !!data.includeCashInOut;
-  const hasAdjustments = isSales && (data.includeExpenses || includeCashIn || includeCashOut);
+  const includeLoans = data.includeLoans !== undefined ? !!data.includeLoans : false;
+  const hasAdjustments = isSales && (data.includeExpenses || includeCashIn || includeCashOut || includeLoans);
 
   const totalExpenses = data.includeExpenses
     ? (data.expenseTotal !== undefined ? data.expenseTotal : (data.expenses || []).reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0))
@@ -3161,11 +3167,14 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
   const totalCashOut = includeCashOut
     ? (data.cashOutTotal !== undefined ? data.cashOutTotal : (data.notes || []).filter((n: any) => n.type === "-").reduce((sum: number, n: any) => sum + Number(n.amount || 0), 0))
     : 0;
+  const totalLoansPaid = includeLoans
+    ? (data.loansPaidTotal !== undefined ? data.loansPaidTotal : (data.loans || []).reduce((sum: number, l: any) => sum + Number(l.amount || 0), 0))
+    : 0;
   const netCashFlow = totalCashIn - totalCashOut;
   const grossSalesRevenue = metrics.totalAmount;
   const netRevenue = data.netRevenue !== undefined
     ? data.netRevenue
-    : (grossSalesRevenue - (data.includeExpenses ? totalExpenses : 0) + totalCashIn - totalCashOut);
+    : (grossSalesRevenue - (data.includeExpenses ? totalExpenses : 0) + totalCashIn - totalCashOut - totalLoansPaid);
 
   if (isSales && data.includeExpenses) {
     activeFilters.push(`Expenses: Deducted (-Rs. ${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
@@ -3175,6 +3184,9 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
   }
   if (isSales && includeCashOut) {
     activeFilters.push(`Cash Out: Deducted (-Rs. ${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+  }
+  if (isSales && includeLoans) {
+    activeFilters.push(`Loans Repaid: Deducted (-Rs. ${totalLoansPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
   }
   if (isSales && hasAdjustments) {
     activeFilters.push(`View: ${data.viewMode === "detailed" ? "Itemized Listing" : "Summary Only"}`);
@@ -3731,6 +3743,13 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
             <div class="kpi-label" style="color: #b91c1c;">Total Cash Out (-)</div>
             <div class="kpi-val" style="font-size: 11.5px; color: #b91c1c;">
               - Rs. ${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>` : ""}
+          ${includeLoans ? `
+          <div class="kpi-card">
+            <div class="kpi-label" style="color: #7e22ce;">Total Loans Paid (-)</div>
+            <div class="kpi-val" style="font-size: 11.5px; color: #7e22ce;">
+              - Rs. ${totalLoansPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>` : ""}
           <div class="kpi-card highlight">

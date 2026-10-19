@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { BarChart3, RotateCw, X, Receipt, FileText, Ban } from "lucide-react";
+import { BarChart3, RotateCw, X, Receipt, FileText, Ban, Eye, CheckCircle2, Smartphone } from "lucide-react";
 import { api } from "../../../lib/api";
 import { PermissionOverrideModal } from "../modals/PermissionOverrideModal";
+import { SaleDetailsModal } from "../modals/SaleDetailsModal";
 import { generateSaleBillHtml, generateSaleInvoiceHtml, printDocument } from "../../../lib/invoiceGenerator";
 import type { SalesPanelProps } from "../../../types/pos";
 
@@ -12,25 +13,60 @@ export function SalesPanel({
   canVoidSale,
   onClose,
   onRefresh,
-}: SalesPanelProps & { onRefresh: (filters?: { search?: string; startDate?: string; endDate?: string }) => void }): JSX.Element {
+}: SalesPanelProps): JSX.Element {
   const [voidingSaleId, setVoidingSaleId] = useState<string | null>(null);
+  const [settlingSaleId, setSettlingSaleId] = useState<string | null>(null);
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   const [overrideId, setOverrideId] = useState<string | null>(null);
+  const [selectedSale, setSelectedSale] = useState<any | null>(null);
   
   // Filter States
   const [search, setSearch] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedMethod, setSelectedMethod] = useState<string>("all");
 
   const handleApplyFilters = () => {
-    onRefresh({ search, startDate, endDate });
+    onRefresh({
+      search,
+      startDate,
+      endDate,
+      status: selectedStatus !== "all" ? selectedStatus : undefined,
+      paymentMethod: selectedMethod !== "all" ? selectedMethod : undefined,
+    });
   };
 
   const handleClearFilters = () => {
     setSearch("");
     setStartDate("");
     setEndDate("");
+    setSelectedStatus("all");
+    setSelectedMethod("all");
     onRefresh();
+  };
+
+  const handleSettleKoko = async (saleId: string) => {
+    if (!window.confirm("Confirm that full settlement has been received from Koko Pay? This will mark the sale as COMPLETED.")) {
+      return;
+    }
+    setSettlingSaleId(saleId);
+    try {
+      const res = await api<any>(`/sales/${saleId}/settle-koko`, {
+        method: "POST",
+        body: JSON.stringify({ notes: "Koko settlement confirmed and completed from POS" }),
+      });
+      if (res.status === "success" || res.data) {
+        alert("Koko payment settled successfully! Sale marked as COMPLETED.");
+        handleApplyFilters();
+      } else {
+        alert(res.message || "Failed to settle Koko payment");
+      }
+    } catch (err: any) {
+      alert(err?.message || "Failed to settle Koko payment");
+    } finally {
+      setSettlingSaleId(null);
+    }
   };
 
   const handleVoidSale = async (saleId: string, overrideIdParam?: string) => {
@@ -130,6 +166,35 @@ export function SalesPanel({
               className="dark-input px-3 py-2 bg-[#1e293b] border border-slate-700 rounded-lg text-white font-medium text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" 
             />
           </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Status</label>
+            <select 
+              value={selectedStatus} 
+              onChange={(e) => setSelectedStatus(e.target.value)} 
+              style={{ colorScheme: 'dark', color: '#ffffff' }}
+              className="dark-input px-3 py-2 bg-[#1e293b] border border-slate-700 rounded-lg text-white font-medium text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="all">All Statuses</option>
+              <option value="PENDING">Pending (Koko / Credit)</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="VOID">Voided</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Payment Method</label>
+            <select 
+              value={selectedMethod} 
+              onChange={(e) => setSelectedMethod(e.target.value)} 
+              style={{ colorScheme: 'dark', color: '#ffffff' }}
+              className="dark-input px-3 py-2 bg-[#1e293b] border border-slate-700 rounded-lg text-white font-medium text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="all">All Methods</option>
+              <option value="KOKO">Koko Pay</option>
+              <option value="CASH">Cash</option>
+              <option value="CARD">Card</option>
+            </select>
+          </div>
           <div className="flex gap-2">
             <button onClick={handleApplyFilters} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold shadow-xs transition-colors cursor-pointer">
               Apply
@@ -179,42 +244,90 @@ export function SalesPanel({
             </div>
           ) : (
             <div className="space-y-2.5">
-              {salesData.map((sale) => (
-                <div
-                  key={sale._id}
-                  className={`bg-white rounded-xl p-3.5 border border-slate-200/90 shadow-xs hover:border-slate-300 transition-all ${
-                    sale.status === "VOIDED" || sale.status === "VOID" || sale.status === "CANCELLED" ? "opacity-60 bg-slate-100/70" : ""
-                  }`}
-                >
-                  <div className="flex justify-between items-start gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-900 font-bold font-mono text-sm tracking-tight">{sale.saleNumber}</span>
-                        <span
-                          className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                            sale.status === "COMPLETED"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : sale.status === "FULL_RETURN" || sale.status === "PARTIAL_RETURN" || sale.status === "RETURNED"
-                              ? "bg-amber-50 text-amber-700 border border-amber-300"
-                              : "bg-rose-50 text-rose-700 border border-rose-200"
-                          }`}
-                        >
-                          {sale.status}
-                        </span>
+              {salesData.map((sale) => {
+                const isKoko = Boolean(sale.kokoDetails || (Array.isArray(sale.payments) && sale.payments.some((p: any) => p.method === "KOKO")));
+                const isPending = sale.status === "PENDING";
+
+                return (
+                  <div
+                    key={sale._id}
+                    className={`bg-white rounded-xl p-3.5 border border-slate-200/90 shadow-xs hover:border-slate-300 transition-all ${
+                      sale.status === "VOIDED" || sale.status === "VOID" || sale.status === "CANCELLED" ? "opacity-60 bg-slate-100/70" : ""
+                    }`}
+                  >
+                    <div className="flex justify-between items-start gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-slate-900 font-bold font-mono text-sm tracking-tight">{sale.saleNumber}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              sale.status === "COMPLETED"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : isPending
+                                ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                : sale.status === "FULL_RETURN" || sale.status === "PARTIAL_RETURN" || sale.status === "RETURNED"
+                                ? "bg-amber-50 text-amber-700 border border-amber-300"
+                                : "bg-rose-50 text-rose-700 border border-rose-200"
+                            }`}
+                          >
+                            {sale.status}
+                          </span>
+                          {isKoko && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 flex items-center gap-1">
+                              <Smartphone className="w-2.5 h-2.5 text-purple-700" />
+                              Koko Pay
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSale(sale)}
+                            className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors cursor-pointer"
+                            title="View Sale Details"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1 font-mono">
+                          {new Date(sale.createdAt).toLocaleString()} • {sale.items?.length || 0} items
+                        </p>
+                        {isKoko && sale.kokoDetails && (
+                          <div className="mt-1 text-[11px] text-purple-800 font-medium flex items-center gap-2 flex-wrap">
+                            <span>1st Payout: <strong className="font-bold text-emerald-700">Rs. {Number(sale.kokoDetails.netFirstPayout || 0).toLocaleString()}</strong></span>
+                            <span>•</span>
+                            <span>Pending Balance: <strong className="font-bold text-purple-900">Rs. {Number(sale.kokoDetails.remainingAmount || 0).toLocaleString()}</strong></span>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-500 mt-1 font-mono">
-                        {new Date(sale.createdAt).toLocaleString()} • {sale.items?.length || 0} items
-                      </p>
+                      <div className="text-right shrink-0">
+                        <p className="text-base font-bold text-slate-900 font-mono">Rs. {sale.grandTotal?.toFixed(2)}</p>
+                        {sale.discountTotal > 0 && (
+                          <p className="text-xs text-rose-600 font-medium font-mono">Disc: Rs. - {sale.discountTotal.toFixed(2)}</p>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-base font-bold text-slate-900 font-mono">Rs. {sale.grandTotal?.toFixed(2)}</p>
-                      {sale.discountTotal > 0 && (
-                        <p className="text-xs text-rose-600 font-medium font-mono">Disc: Rs. - {sale.discountTotal.toFixed(2)}</p>
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap gap-2 items-center">
+                      <button 
+                        onClick={() => setSelectedSale(sale)} 
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold rounded-lg text-xs border border-blue-200 transition-colors cursor-pointer"
+                        title="View Complete Sale Details"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-blue-600" />
+                        View Details
+                      </button>
+
+                      {/* Settle Koko Payment button for Pending status */}
+                      {isPending && (
+                        <button
+                          onClick={() => handleSettleKoko(sale._id)}
+                          disabled={settlingSaleId === sale._id}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                          title="Mark full payment received from Koko & complete sale"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {settlingSaleId === sale._id ? "Settling..." : "Mark Settled & Complete"}
+                        </button>
                       )}
-                    </div>
-                  </div>
-                  {sale.status === "COMPLETED" && (
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex gap-2 items-center">
+
                       <button 
                         onClick={() => {
                           const customerName = sale.customer?.name || '';
@@ -223,11 +336,12 @@ export function SalesPanel({
                           const html = generateSaleBillHtml(sale, undefined, customerName, customerPhone, customerEmail);
                           printDocument(html, `Receipt-${sale.saleNumber}`, "bill");
                         }} 
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
                       >
                         <Receipt className="w-3.5 h-3.5 text-slate-500" />
                         Print Receipt
                       </button>
+
                       <button 
                         onClick={() => {
                           const customerName = sale.customer?.name || '';
@@ -236,28 +350,43 @@ export function SalesPanel({
                           const html = generateSaleInvoiceHtml(sale, undefined, customerName, customerPhone, customerEmail);
                           printDocument(html, `Invoice-${sale.saleNumber}`, "invoice");
                         }} 
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold rounded-lg text-xs border border-blue-200 transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs border border-indigo-200 transition-colors cursor-pointer"
                       >
-                        <FileText className="w-3.5 h-3.5 text-blue-600" />
+                        <FileText className="w-3.5 h-3.5 text-indigo-600" />
                         Print Invoice
                       </button>
-                      <button 
-                        onClick={() => handleVoidSale(sale._id)} 
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg text-xs border border-rose-200 ml-auto transition-colors cursor-pointer"
-                        title="Void Sale (return items to stock)"
-                      >
-                        <Ban className="w-3.5 h-3.5 text-rose-600" />
-                        Void Sale
-                      </button>
+
+                      {sale.status === "COMPLETED" && (
+                        <button 
+                          onClick={() => handleVoidSale(sale._id)} 
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg text-xs border border-rose-200 ml-auto transition-colors cursor-pointer"
+                          title="Void Sale (return items to stock)"
+                        >
+                          <Ban className="w-3.5 h-3.5 text-rose-600" />
+                          Void Sale
+                        </button>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
       
+      {selectedSale && (
+        <SaleDetailsModal
+          sale={selectedSale}
+          onClose={() => setSelectedSale(null)}
+          onVoidSale={(id) => handleVoidSale(id)}
+          onSettleKoko={async (id) => {
+            await handleSettleKoko(id);
+            setSelectedSale(null);
+          }}
+        />
+      )}
+
       {showOverrideModal && (
         <PermissionOverrideModal
           permission="CANCEL_SALE"

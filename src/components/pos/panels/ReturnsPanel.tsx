@@ -69,9 +69,10 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
           [key: string]: { selected: boolean; quantity: number; condition: string; destination: string };
         } = {};
         foundSale.items?.forEach((item: any) => {
+          const remaining = Math.max(0, (item.quantity || 1) - (item.returnedQuantity || 0));
           initialSelection[item._id] = {
             selected: false,
-            quantity: item.quantity,
+            quantity: remaining > 0 ? remaining : (item.quantity || 1),
             condition: "GOOD",
             destination: "RETURN_TO_STOCK",
           };
@@ -140,12 +141,20 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
 
     const itemsToReturn = sale.items
       .filter((item: any) => selectedItems[item._id]?.selected)
-      .map((item: any) => ({
-        saleItemId: item._id,
-        quantity: selectedItems[item._id]?.quantity || item.quantity,
-        condition: selectedItems[item._id]?.condition,
-        destination: selectedItems[item._id]?.destination,
-      }));
+      .map((item: any) => {
+        const sel = selectedItems[item._id];
+        const isDefective = sel?.condition === "DEFECTIVE";
+        return {
+          saleItemId: item._id,
+          productId: item.product?._id || item.product,
+          stockItemId: item.stockItem?._id || item.stockItem,
+          serialNumber: item.serialNumber,
+          imei1: item.imei1,
+          quantity: sel?.quantity || item.quantity,
+          condition: sel?.condition || "GOOD",
+          destination: isDefective ? "DEFECTIVE_INVENTORY" : "RETURN_TO_STOCK",
+        };
+      });
 
     if (itemsToReturn.length === 0) {
       setError("Please select at least one item to return");
@@ -351,6 +360,12 @@ export function ReturnsPanel({ onClose, onInitiateExchange }: ReturnsPanelProps)
                           </div>
                           <div className="flex-1">
                             <p className="text-slate-800 font-medium dark:text-white">{item.productName}</p>
+                            {(item.serialNumber || item.imei1) && (
+                              <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                                {item.serialNumber && <span>SN: {item.serialNumber} </span>}
+                                {item.imei1 && <span>IMEI: {item.imei1}</span>}
+                              </p>
+                            )}
                             <p className="text-slate-500 text-sm dark:text-slate-400">Rs. {item.unitPrice?.toFixed(2)} × {remaining} (Max)</p>
                             
                             {selectedItems[item._id]?.selected && (

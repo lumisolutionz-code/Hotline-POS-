@@ -11,6 +11,7 @@ export { PermissionOverrideModal } from './modals/PermissionOverrideModal';
 export { CustomerRequestModal } from './modals/CustomerRequestModal';
 export { ReportsModal } from './modals/ReportsModal';
 export { CashDrawerModal } from './modals/CashDrawerModal';
+export { SaleDetailsModal } from './modals/SaleDetailsModal';
 
 // Panels
 export { SalesPanel } from './panels/SalesPanel';
@@ -23,3 +24,4 @@ export * from '../../types/pos';
 
 export { ExtrasPanel, ExpensesPanel } from './panels/ExtrasPanel';
 export { SimReloadPanel } from './panels/SimReloadPanel';
+export { LoansPanel, LoansView } from './panels/LoansPanel';
