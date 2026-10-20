@@ -388,7 +388,7 @@ export function CashDrawerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh] text-slate-800">
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] text-slate-800">
         
         {/* Header */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0">
@@ -472,7 +472,7 @@ export function CashDrawerModal({
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 overflow-y-auto space-y-4">
+        <div className="p-6 overflow-y-auto space-y-4.5">
           {/* BACKUP & CLOSING SUCCESS OR PROGRESS OVERLAY */}
           {closedSessionResult ? (
             <div className="py-6 px-4 flex flex-col items-center justify-center text-center space-y-5 animate-in fade-in duration-200">
@@ -696,7 +696,7 @@ export function CashDrawerModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                       {PROVIDERS.map((prov) => {
                         const expVal = expectedReloadBalances[prov.key] || 0;
                         const currentVal = simOpening[prov.key] || "";
@@ -918,8 +918,8 @@ export function CashDrawerModal({
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <div>
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                          <div className="sm:col-span-3">
                             <label className="block text-[11px] font-bold text-slate-700 mb-1">
                               SIM Provider
                             </label>
@@ -935,7 +935,7 @@ export function CashDrawerModal({
                             </select>
                           </div>
 
-                          <div>
+                          <div className="sm:col-span-4">
                             <label className="block text-[11px] font-bold text-slate-700 mb-1">
                               Top-Up Amount (LKR)
                             </label>
@@ -949,7 +949,7 @@ export function CashDrawerModal({
                             />
                           </div>
 
-                          <div>
+                          <div className="sm:col-span-5">
                             <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                               Notes / Dealer Receipt (Optional)
                             </label>
@@ -963,27 +963,27 @@ export function CashDrawerModal({
                           </div>
                         </div>
 
-                        {/* Quick amount chips */}
-                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                          <span className="text-[10px] text-slate-400 font-semibold">Quick Amounts:</span>
-                          {[1000, 2000, 5000, 10000, 20000].map((amt) => (
-                            <button
-                              key={amt}
-                              type="button"
-                              onClick={() => setTopUpAmount(String(amt))}
-                              className="px-2 py-0.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 text-[10px] font-bold hover:bg-indigo-100 transition-colors cursor-pointer"
-                            >
-                              +Rs. {amt.toLocaleString()}
-                            </button>
-                          ))}
-                        </div>
+                        {/* Quick amount chips & confirm button aligned on same row */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] text-slate-500 font-semibold">Quick Amounts:</span>
+                            {[1000, 2000, 5000, 10000, 20000].map((amt) => (
+                              <button
+                                key={amt}
+                                type="button"
+                                onClick={() => setTopUpAmount(String(amt))}
+                                className="px-2.5 py-1 rounded-lg bg-white border border-indigo-200 text-indigo-700 text-xs font-bold hover:bg-indigo-100 transition-colors cursor-pointer shadow-2xs"
+                              >
+                                +Rs. {amt.toLocaleString()}
+                              </button>
+                            ))}
+                          </div>
 
-                        <div className="flex justify-end pt-1">
                           <button
                             type="button"
                             disabled={topUpSubmitting}
                             onClick={handleAddTopUp}
-                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50 shrink-0"
                           >
                             {topUpSubmitting ? "Adding Top-Up..." : "Confirm & Increase Balance"}
                           </button>
@@ -1163,7 +1163,7 @@ export function CashDrawerModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                       {PROVIDERS.map((prov) => {
                         const simData = liveReloadSession?.sims?.[prov.key];
                         const totalAvailable = simData?.totalAvailable || 0;

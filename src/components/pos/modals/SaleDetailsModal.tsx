@@ -1,4 +1,4 @@
-import { X, User, Phone, Mail, FileText, Ban, Printer, CheckCircle2, Landmark, CreditCard } from "lucide-react";
+import { X, User, Phone, Mail, FileText, Ban, Printer, CheckCircle2, Landmark, CreditCard, Banknote, Smartphone } from "lucide-react";
 import { generateSaleBillHtml, generateSaleInvoiceHtml, printDocument } from "../../../lib/invoiceGenerator";
 
 export interface SaleDetailsModalProps {
@@ -58,10 +58,20 @@ export function SaleDetailsModal({ sale, onClose, onVoidSale, onSettleKoko }: Sa
 
   const status = sale.status || "COMPLETED";
 
+  const getSalePaymentMethods = (s: any): string[] => {
+    if (Array.isArray(s.payments) && s.payments.length > 0) {
+      const valid = s.payments.filter((p: any) => Number(p.amount) > 0 || s.payments.length === 1);
+      const methods: string[] = Array.from(new Set<string>(valid.map((p: any) => String(p.method || "CASH").toUpperCase())));
+      if (methods.length > 0) return methods;
+    }
+    if (s.paymentMethod) return [String(s.paymentMethod).toUpperCase()];
+    return ["CASH"];
+  };
+
+  const paymentMethods = getSalePaymentMethods(sale);
   const isKokoSale =
-    sale.paymentMethod === "KOKO" ||
-    (sale.payments && sale.payments.some((p: any) => p.method === "KOKO")) ||
-    Boolean(sale.kokoDetails);
+    paymentMethods.includes("KOKO") ||
+    Boolean(sale.kokoDetails && (Number(sale.kokoDetails.firstInstallmentAmount || 0) > 0 || Number(sale.kokoDetails.remainingAmount || 0) > 0));
   const koko = sale.kokoDetails || {};
   const gTotal = Number(sale.grandTotal || sale.finalTotal || 0);
   const kokoParts = Number(koko.splitParts || 3);
@@ -81,7 +91,7 @@ export function SaleDetailsModal({ sale, onClose, onVoidSale, onSettleKoko }: Sa
         {/* Modal Header (Pinned) */}
         <div className="flex items-start justify-between border-b border-slate-100 p-5 sm:p-6 pb-4 shrink-0 bg-white">
           <div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-xl font-bold text-slate-900 tracking-tight">
                 Receipt #{saleDocNum}
               </h3>
@@ -98,11 +108,39 @@ export function SaleDetailsModal({ sale, onClose, onVoidSale, onSettleKoko }: Sa
               >
                 {status.replace("_", " ")}
               </span>
-              {isKokoSale && (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border border-purple-200">
-                  Koko Pay
-                </span>
-              )}
+
+              {/* Payment Method Badges */}
+              {paymentMethods.map((method) => {
+                if (method === "KOKO") {
+                  return (
+                    <span key={method} className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border border-purple-200 flex items-center gap-1">
+                      <Smartphone className="w-3 h-3 text-purple-700" />
+                      Koko Pay
+                    </span>
+                  );
+                }
+                if (method === "CARD") {
+                  return (
+                    <span key={method} className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
+                      <CreditCard className="w-3 h-3 text-blue-700" />
+                      Card
+                    </span>
+                  );
+                }
+                if (method === "CASH") {
+                  return (
+                    <span key={method} className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                      <Banknote className="w-3 h-3 text-emerald-700" />
+                      Cash
+                    </span>
+                  );
+                }
+                return (
+                  <span key={method} className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
+                    {method.replace("_", " ")}
+                  </span>
+                );
+              })}
             </div>
             <p className="text-xs text-slate-500 mt-1">
               <span>{formatDate(sale.createdAt)}</span>

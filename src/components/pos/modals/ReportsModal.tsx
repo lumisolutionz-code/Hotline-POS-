@@ -75,6 +75,7 @@ export interface ReportsModalProps {
   categories: Category[];
   products: Product[];
   currentUser?: any;
+  activeCashSession?: any;
 }
 
 const getLocalDateString = (d: Date = new Date()): string => {
@@ -90,6 +91,7 @@ export function ReportsModal({
   categories,
   products,
   currentUser,
+  activeCashSession,
 }: ReportsModalProps): JSX.Element | null {
   if (!isOpen) return null;
 
@@ -102,6 +104,7 @@ export function ReportsModal({
   const [expensesList, setExpensesList] = useState<ReportExpense[]>([]);
   const [notesList, setNotesList] = useState<ReportNote[]>([]);
   const [loanPaymentsList, setLoanPaymentsList] = useState<ReportLoanPayment[]>([]);
+  const [sessionsList, setSessionsList] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
@@ -168,6 +171,7 @@ export function ReportsModal({
       let notesQuery = "/notes?limit=1500";
       let repairsQuery = "/repairs?limit=1500";
       let loansQuery = "/loan-payments?limit=1500";
+      let sessionsQuery = "/cash-sessions?limit=100";
 
       if (startDate) {
         const s = new Date(startDate + "T00:00:00");
@@ -177,6 +181,7 @@ export function ReportsModal({
         notesQuery += `&startDate=${encodeURIComponent(sIso)}`;
         repairsQuery += `&startDate=${encodeURIComponent(sIso)}`;
         loansQuery += `&startDate=${encodeURIComponent(sIso)}`;
+        sessionsQuery += `&startDate=${encodeURIComponent(sIso)}`;
       }
       if (endDate) {
         const e = new Date(endDate + "T23:59:59.999");
@@ -186,14 +191,16 @@ export function ReportsModal({
         notesQuery += `&endDate=${encodeURIComponent(eIso)}`;
         repairsQuery += `&endDate=${encodeURIComponent(eIso)}`;
         loansQuery += `&endDate=${encodeURIComponent(eIso)}`;
+        sessionsQuery += `&endDate=${encodeURIComponent(eIso)}`;
       }
 
-      const [salesRes, repairsRes, expRes, notesRes, loansRes] = await Promise.all([
+      const [salesRes, repairsRes, expRes, notesRes, loansRes, sessionsRes] = await Promise.all([
         api<any>(salesQuery),
         api<any>(repairsQuery).catch(() => api<any>("/repairs?limit=1500")),
         api<any>(expQuery).catch(() => ({ status: "error", data: { expenses: [] } })),
         api<any>(notesQuery).catch(() => ({ status: "error", data: { notes: [] } })),
         api<any>(loansQuery).catch(() => ({ status: "error", data: { payments: [] } })),
+        api<any>(sessionsQuery).catch(() => ({ status: "error", data: { sessions: [] } })),
       ]);
 
       if (salesRes.status === "success" && Array.isArray(salesRes.data?.sales)) {
@@ -224,6 +231,12 @@ export function ReportsModal({
         setLoanPaymentsList(loansRes.data.payments);
       } else {
         setLoanPaymentsList([]);
+      }
+
+      if (sessionsRes.status === "success" && Array.isArray(sessionsRes.data?.sessions)) {
+        setSessionsList(sessionsRes.data.sessions);
+      } else {
+        setSessionsList([]);
       }
     } catch (err: any) {
       console.error("Failed to fetch reports data:", err);
@@ -601,6 +614,16 @@ export function ReportsModal({
     return net;
   }, [salesMetrics.totalAmount, includeCashIn, includeCashOut, includeLoans, cashInTotal, cashOutTotal, loansPaidTotal]);
 
+  const startingCash = useMemo(() => {
+    if (sessionsList && sessionsList.length > 0) {
+      return sessionsList.reduce((sum, s) => sum + Number(s.openingAmount || 0), 0);
+    }
+    if (activeCashSession?.openingAmount) {
+      return Number(activeCashSession.openingAmount);
+    }
+    return 0;
+  }, [sessionsList, activeCashSession]);
+
   // Trigger Print A4 Business Report
   const handlePrintBusinessReport = async () => {
     if (isPrinting || isDownloading) return;
@@ -743,12 +766,16 @@ export function ReportsModal({
     const html = generateDailySalesReportHtml(filteredSales, sDate, eDate, shopSettings, currentUser, {
       includeExpenses: includeExpenses,
       includeCashInOut: includeCashIn || includeCashOut,
+      includeLoans: includeLoans,
       viewMode: viewMode,
       expenses: filteredExpenses,
       notes: visibleNotes,
+      loans: filteredLoanPayments,
       expenseTotal: expenseTotal,
       cashInTotal: cashInTotal,
-      cashOutTotal: cashOutTotal,
+      cashOutTotal: cashOutTotal + (includeExpenses ? expenseTotal : 0),
+      loanPaymentsTotal: includeLoans ? loansPaidTotal : 0,
+      startingCash: startingCash,
       netRevenue: netRevenue,
     });
     printDocument(html, `Daily-Sales-Thermal-${sDate.toISOString().slice(0, 10)}`, "bill");

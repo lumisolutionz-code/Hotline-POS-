@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BarChart3, RotateCw, X, Receipt, FileText, Ban, Eye, CheckCircle2, Smartphone } from "lucide-react";
+import { BarChart3, RotateCw, X, Receipt, FileText, Ban, Eye, CheckCircle2, Smartphone, Banknote, CreditCard } from "lucide-react";
 import { api } from "../../../lib/api";
 import { PermissionOverrideModal } from "../modals/PermissionOverrideModal";
 import { SaleDetailsModal } from "../modals/SaleDetailsModal";
@@ -245,7 +245,21 @@ export function SalesPanel({
           ) : (
             <div className="space-y-2.5">
               {salesData.map((sale) => {
-                const isKoko = Boolean(sale.kokoDetails || (Array.isArray(sale.payments) && sale.payments.some((p: any) => p.method === "KOKO")));
+                const getSalePaymentMethods = (s: any): string[] => {
+                  if (Array.isArray(s.payments) && s.payments.length > 0) {
+                    const valid = s.payments.filter((p: any) => Number(p.amount) > 0 || s.payments.length === 1);
+                    const methods: string[] = Array.from(new Set<string>(valid.map((p: any) => String(p.method || "CASH").toUpperCase())));
+                    if (methods.length > 0) return methods;
+                  }
+                  if (s.paymentMethod) return [String(s.paymentMethod).toUpperCase()];
+                  return ["CASH"];
+                };
+
+                const paymentMethods = getSalePaymentMethods(sale);
+                const isKoko = Boolean(
+                  paymentMethods.includes("KOKO") ||
+                  (sale.kokoDetails && (Number(sale.kokoDetails.firstInstallmentAmount || 0) > 0 || Number(sale.kokoDetails.remainingAmount || 0) > 0))
+                );
                 const isPending = sale.status === "PENDING";
 
                 return (
@@ -272,12 +286,40 @@ export function SalesPanel({
                           >
                             {sale.status}
                           </span>
-                          {isKoko && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 flex items-center gap-1">
-                              <Smartphone className="w-2.5 h-2.5 text-purple-700" />
-                              Koko Pay
-                            </span>
-                          )}
+
+                          {/* Payment Method Badges */}
+                          {paymentMethods.map((method) => {
+                            if (method === "KOKO") {
+                              return (
+                                <span key={method} className="px-2 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 flex items-center gap-1">
+                                  <Smartphone className="w-2.5 h-2.5 text-purple-700" />
+                                  Koko Pay
+                                </span>
+                              );
+                            }
+                            if (method === "CARD") {
+                              return (
+                                <span key={method} className="px-2 py-0.5 rounded text-[10px] font-black bg-blue-50 text-blue-900 border border-blue-200 flex items-center gap-1">
+                                  <CreditCard className="w-2.5 h-2.5 text-blue-700" />
+                                  Card
+                                </span>
+                              );
+                            }
+                            if (method === "CASH") {
+                              return (
+                                <span key={method} className="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-50 text-emerald-900 border border-emerald-200 flex items-center gap-1">
+                                  <Banknote className="w-2.5 h-2.5 text-emerald-700" />
+                                  Cash
+                                </span>
+                              );
+                            }
+                            return (
+                              <span key={method} className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-200 flex items-center gap-1">
+                                {method.replace("_", " ")}
+                              </span>
+                            );
+                          })}
+
                           <button
                             type="button"
                             onClick={() => setSelectedSale(sale)}
@@ -315,8 +357,8 @@ export function SalesPanel({
                         View Details
                       </button>
 
-                      {/* Settle Koko Payment button for Pending status */}
-                      {isPending && (
+                      {/* Settle Koko Payment button only for Pending Koko status */}
+                      {isKoko && isPending && (
                         <button
                           onClick={() => handleSettleKoko(sale._id)}
                           disabled={settlingSaleId === sale._id}

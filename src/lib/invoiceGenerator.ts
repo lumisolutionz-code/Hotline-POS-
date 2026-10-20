@@ -2435,12 +2435,16 @@ export function generateRepairBillHtml(
 export interface DailySalesReportOptions {
   includeExpenses?: boolean;
   includeCashInOut?: boolean;
+  includeLoans?: boolean;
   viewMode?: "summary" | "detailed";
   expenses?: any[];
   notes?: any[];
+  loans?: any[];
   expenseTotal?: number;
   cashInTotal?: number;
   cashOutTotal?: number;
+  loanPaymentsTotal?: number;
+  startingCash?: number;
   netRevenue?: number;
 }
 
@@ -2485,9 +2489,35 @@ export function generateDailySalesReportHtml(
   let grandTotalAmount = 0;
   let totalChangeGiven = 0;
   let changeTransactionsCount = 0;
+  let totalDiscountGiven = 0;
+  let grossCashTotal = 0;
+  let cardSalesTotal = 0;
+  let kokoGrossTotal = 0;
+  let kokoReceivedTotal = 0;
+  const otherPaymentBreakdown: { [key: string]: number } = {};
   const paymentBreakdown: { [key: string]: number } = {};
 
-  const salesHtml = sales.map((sale: any, idx: number) => {
+  // Helper to safely extract epoch timestamp from various date representations
+  const parseTimestamp = (item: any): number => {
+    const raw = item?.createdAt || item?.created_at || item?.date || item?.paymentDate || item?.timestamp;
+    if (!raw) return 0;
+    const t = new Date(raw).getTime();
+    return isNaN(t) ? 0 : t;
+  };
+
+  // Sort sales chronologically: morning / first sales first, latest sales at the end
+  const sortedSales = Array.isArray(sales)
+    ? [...sales].sort((a: any, b: any) => {
+        const timeA = parseTimestamp(a);
+        const timeB = parseTimestamp(b);
+        if (timeA !== timeB) return timeA - timeB;
+        const numA = String(a.saleNumber || a.sale_number || "");
+        const numB = String(b.saleNumber || b.sale_number || "");
+        return numA.localeCompare(numB, undefined, { numeric: true });
+      })
+    : [];
+
+  const salesHtml = sortedSales.map((sale: any, idx: number) => {
     totalSalesCount += 1;
     const saleNum = sale.saleNumber || ("#" + (sale._id ? String(sale._id).slice(-6) : idx + 1));
     const saleTime = sale.createdAt
@@ -2496,6 +2526,15 @@ export function generateDailySalesReportHtml(
     const custName = sale.customer?.name || sale.client?.name || "";
     const saleTotal = Number(sale.grandTotal !== undefined ? sale.grandTotal : (sale.total || 0));
     grandTotalAmount += saleTotal;
+
+    // Track discounts
+    let thisSaleDiscount = Number(sale.discountTotal || 0);
+    if (!thisSaleDiscount && sale.subtotal && sale.grandTotal && Number(sale.subtotal) > Number(sale.grandTotal)) {
+      thisSaleDiscount = Number(sale.subtotal) - Number(sale.grandTotal);
+    }
+    if (thisSaleDiscount > 0) {
+      totalDiscountGiven += thisSaleDiscount;
+    }
 
     // Track change given for this sale
     let saleChange = Number(
@@ -2516,15 +2555,72 @@ export function generateDailySalesReportHtml(
       changeTransactionsCount += 1;
     }
 
-    // Track payment breakdown
+    // Track payment breakdown for this sale
+    let saleCash = 0;
+    let saleCard = 0;
+    let saleKokoGross = 0;
+
     if (Array.isArray(sale.payments) && sale.payments.length > 0) {
       sale.payments.forEach((p: any) => {
         const method = (p.method || "OTHER").toUpperCase();
-        paymentBreakdown[method] = (paymentBreakdown[method] || 0) + Number(p.amount || 0);
+        const amt = Number(p.amount || 0);
+        if (method === "CASH") {
+          saleCash += amt;
+        } else if (method === "CARD") {
+          saleCard += amt;
+          cardSalesTotal += amt;
+        } else if (method === "KOKO" || method === "KOKOPAY") {
+          saleKokoGross += amt;
+          kokoGrossTotal += amt;
+          let kokoNet = 0;
+          if (sale.kokoDetails?.netFirstPayout && Number(sale.kokoDetails.netFirstPayout) > 0) {
+            kokoNet = Number(sale.kokoDetails.netFirstPayout);
+          } else {
+            const parts = Number(sale.kokoDetails?.splitParts) || 3;
+            const feePct = Number(sale.kokoDetails?.feePercentage) || 12;
+            const firstInst = amt / parts;
+            kokoNet = firstInst * (1 - feePct / 100);
+          }
+          kokoReceivedTotal += kokoNet;
+        } else {
+          otherPaymentBreakdown[method] = (otherPaymentBreakdown[method] || 0) + amt;
+        }
+        paymentBreakdown[method] = (paymentBreakdown[method] || 0) + amt;
       });
     } else {
-      paymentBreakdown["CASH"] = (paymentBreakdown["CASH"] || 0) + saleTotal;
+      const mainMethod = (sale.paymentMethod || "CASH").toUpperCase();
+      if (mainMethod === "CASH") {
+        saleCash += Number(sale.amountPaid || 0) || (saleTotal + saleChange);
+        paymentBreakdown["CASH"] = (paymentBreakdown["CASH"] || 0) + saleCash;
+      } else if (mainMethod === "CARD") {
+        saleCard += saleTotal;
+        cardSalesTotal += saleTotal;
+        paymentBreakdown["CARD"] = (paymentBreakdown["CARD"] || 0) + saleTotal;
+      } else if (mainMethod === "KOKO" || mainMethod === "KOKOPAY") {
+        saleKokoGross += saleTotal;
+        kokoGrossTotal += saleTotal;
+        let kokoNet = 0;
+        if (sale.kokoDetails?.netFirstPayout && Number(sale.kokoDetails.netFirstPayout) > 0) {
+          kokoNet = Number(sale.kokoDetails.netFirstPayout);
+        } else {
+          const parts = Number(sale.kokoDetails?.splitParts) || 3;
+          const feePct = Number(sale.kokoDetails?.feePercentage) || 12;
+          const firstInst = saleTotal / parts;
+          kokoNet = firstInst * (1 - feePct / 100);
+        }
+        kokoReceivedTotal += kokoNet;
+        paymentBreakdown["KOKO"] = (paymentBreakdown["KOKO"] || 0) + saleTotal;
+      } else {
+        otherPaymentBreakdown[mainMethod] = (otherPaymentBreakdown[mainMethod] || 0) + saleTotal;
+        paymentBreakdown[mainMethod] = (paymentBreakdown[mainMethod] || 0) + saleTotal;
+      }
     }
+
+    // If sale had cash and change given, check whether recorded saleCash was net or gross
+    if (saleCash > 0 && saleChange > 0 && saleCash <= (saleTotal - saleCard - saleKokoGross)) {
+      saleCash += saleChange;
+    }
+    grossCashTotal += saleCash;
 
     const items = Array.isArray(sale.items) ? sale.items : [];
     const itemsHtml = items.map((item: any) => {
@@ -2585,28 +2681,54 @@ export function generateDailySalesReportHtml(
           <span class="subtotal-val">Rs. ${saleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>
         ${overallSaleDisc > 0 ? `
-        <div class="sale-subtotal-bar" style="border-top: none; font-size: 10px; font-weight: 700; color: #444; margin-top: 1px;">
+        <div class="sale-subtotal-bar" style="border-top: none; font-size: 10px; font-weight: 700; color: #000000; margin-top: 1px;">
           <span class="subtotal-label">Discount:</span>
           <span class="subtotal-val">Rs. - ${overallSaleDisc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>` : ""}
         ${saleChange > 0 ? `
-        <div class="sale-subtotal-bar" style="border-top: none; font-size: 10px; font-weight: 700; color: #444; margin-top: 1px;">
+        <div class="sale-subtotal-bar" style="border-top: none; font-size: 10px; font-weight: 700; color: #000000; margin-top: 1px;">
           <span class="subtotal-label">Change Given:</span>
           <span class="subtotal-val">Rs. ${saleChange.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>` : ""}
       </div>
-      ${idx < sales.length - 1 ? '<div class="divider-dotted"></div>' : ""}
+      ${idx < sortedSales.length - 1 ? '<div class="divider-dotted"></div>' : ""}
     `;
   }).join("");
 
-  const paymentBreakdownHtml = Object.keys(paymentBreakdown).map((method) => {
-    return `
-      <div class="summary-line payment-line">
-        <span class="summary-label">${method}:</span>
-        <span class="summary-val">Rs. ${paymentBreakdown[method].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-      </div>
-    `;
-  }).join("");
+  const netCashSales = Math.max(0, grossCashTotal - totalChangeGiven);
+
+  const cashInTotal = Number(options?.cashInTotal || 0);
+  const cashOutTotal = Number(options?.cashOutTotal || 0) + (options?.includeExpenses ? Number(options?.expenseTotal || 0) : 0);
+  const loanPaymentsList = Array.isArray(options?.loans)
+    ? options.loans.filter((lp: any) => lp && lp.status !== "CANCELLED")
+    : [];
+  const computedLoanPaymentsTotal = loanPaymentsList.reduce((sum: number, lp: any) => sum + Number(lp.amount || 0), 0);
+  const loanPaymentsTotal = Number(options?.loanPaymentsTotal !== undefined ? options.loanPaymentsTotal : computedLoanPaymentsTotal) || computedLoanPaymentsTotal;
+  const loanPaymentsCount = loanPaymentsList.length;
+  const startingCash = Number(options?.startingCash || 0);
+  const otherSalesTotal = Object.values(otherPaymentBreakdown).reduce((sum, v) => sum + v, 0);
+
+  // Cash Flow = (Cash Sales Net + Card Sales + Koko Received + Other Sales + Cash In) - (Cash Out + Loan Payments)
+  const totalCashInflows = netCashSales + cardSalesTotal + kokoReceivedTotal + otherSalesTotal + cashInTotal;
+  const totalCashOutflows = cashOutTotal + loanPaymentsTotal;
+  const netCashFlow = totalCashInflows - totalCashOutflows;
+
+  // Physical Net Cash In Drawer = Net Cash Flow - Card Sales - Koko Received - Other Non-Cash + Starting Cash
+  // (Identically equals: Starting Cash + Cash Sales Net + Cash In - Cash Out - Loan Payments)
+  const netCashInDrawer = startingCash + netCashSales + cashInTotal - cashOutTotal - loanPaymentsTotal;
+
+  // Sort detailed breakdown lists chronologically: morning/earliest first
+  const sortedExpenses = Array.isArray(options?.expenses)
+    ? [...options.expenses].sort((a: any, b: any) => parseTimestamp(a) - parseTimestamp(b))
+    : [];
+
+  const sortedNotes = Array.isArray(options?.notes)
+    ? [...options.notes].sort((a: any, b: any) => parseTimestamp(a) - parseTimestamp(b))
+    : [];
+
+  const sortedLoans = Array.isArray(options?.loans)
+    ? [...options.loans].sort((a: any, b: any) => parseTimestamp(a) - parseTimestamp(b))
+    : [];
 
   return `<!DOCTYPE html>
 <html>
@@ -2677,7 +2799,7 @@ export function generateDailySalesReportHtml(
         margin: 3px 0;
       }
       .divider-dotted {
-        border-top: 1px dotted #555555;
+        border-top: 1px dotted #000000;
         margin: 4px 0;
       }
       .meta-section {
@@ -2730,7 +2852,7 @@ export function generateDailySalesReportHtml(
       .sale-cust {
         font-size: 10px;
         font-weight: 700;
-        color: #333333;
+        color: #000000;
         margin-bottom: 2px;
       }
       .sale-items-list {
@@ -2763,7 +2885,7 @@ export function generateDailySalesReportHtml(
       .sale-item-serial {
         font-size: 9.5px;
         font-weight: 700;
-        color: #222222;
+        color: #000000;
         margin-top: 1px;
       }
       .item-calc-row,
@@ -2774,7 +2896,7 @@ export function generateDailySalesReportHtml(
         align-items: center;
         font-size: 10px;
         font-weight: 700;
-        color: #000;
+        color: #000000;
         margin-top: 1px;
         width: 100%;
       }
@@ -2798,7 +2920,7 @@ export function generateDailySalesReportHtml(
         font-weight: 900;
         margin-top: 2px;
         padding-top: 2px;
-        border-top: 0.5px solid #666666;
+        border-top: 1px solid #000000;
       }
       .summary-section {
         margin: 4px 0;
@@ -2846,13 +2968,13 @@ export function generateDailySalesReportHtml(
       .payment-line {
         font-size: 10.5px;
         font-weight: 700;
-        color: #222222;
+        color: #000000;
       }
       .powered-by {
         font-size: 9.5px;
         font-weight: 800;
         text-align: center;
-        color: #111111;
+        color: #000000;
         letter-spacing: 0.4px;
         margin: 4px 0 2px 0;
       }
@@ -2913,38 +3035,56 @@ export function generateDailySalesReportHtml(
         ${salesHtml}
       </div>
 
-      ${options?.includeExpenses && options?.viewMode === "detailed" && Array.isArray(options.expenses) && options.expenses.length > 0 ? `
+      ${options?.includeExpenses && options?.viewMode === "detailed" && sortedExpenses.length > 0 ? `
         <div class="divider-double"></div>
-        <div class="summary-title">EXPENSES LISTING (${options.expenses.length})</div>
+        <div class="summary-title">EXPENSES LISTING (${sortedExpenses.length})</div>
         <div class="divider-solid"></div>
         <div class="sales-container">
-          ${options.expenses.map((exp: any, eIdx: number) => `
+          ${sortedExpenses.map((exp: any, eIdx: number) => `
             <div class="sale-block" style="text-align: left;">
               <div class="sale-block-header">
                 <span class="sale-badge">${eIdx + 1}. ${escapeHtml(exp.description || "Expense")}</span>
-                <span class="sale-time" style="color: #b91c1c; font-weight: 800;">- Rs. ${Number(exp.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span class="sale-time" style="color: #000000; font-weight: 800;">- Rs. ${Number(exp.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="sale-cust">Paid To: ${escapeHtml(exp.toWhom || "N/A")}${exp.expenseNo ? ` &bull; ${escapeHtml(exp.expenseNo)}` : ""}</div>
             </div>
-            ${eIdx < (options?.expenses?.length || 0) - 1 ? '<div class="divider-dotted"></div>' : ""}
+            ${eIdx < sortedExpenses.length - 1 ? '<div class="divider-dotted"></div>' : ""}
           `).join("")}
         </div>
       ` : ""}
 
-      ${options?.includeCashInOut && options?.viewMode === "detailed" && Array.isArray(options.notes) && options.notes.length > 0 ? `
+      ${options?.includeCashInOut && options?.viewMode === "detailed" && sortedNotes.length > 0 ? `
         <div class="divider-double"></div>
-        <div class="summary-title">CASH IN / OUT MOVEMENTS (${options.notes.length})</div>
+        <div class="summary-title">CASH IN / OUT MOVEMENTS (${sortedNotes.length})</div>
         <div class="divider-solid"></div>
         <div class="sales-container">
-          ${options.notes.map((nt: any, nIdx: number) => `
+          ${sortedNotes.map((nt: any, nIdx: number) => `
             <div class="sale-block" style="text-align: left;">
               <div class="sale-block-header">
                 <span class="sale-badge">${nIdx + 1}. [${nt.type === "+" ? "IN" : "OUT"}] ${escapeHtml(nt.description || "Movement")}</span>
-                <span class="sale-time" style="color: ${nt.type === "+" ? "#047857" : "#b91c1c"}; font-weight: 800;">${nt.type === "+" ? "+" : "-"} Rs. ${Number(nt.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span class="sale-time" style="color: #000000; font-weight: 800;">${nt.type === "+" ? "+" : "-"} Rs. ${Number(nt.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="sale-cust">Party: ${escapeHtml(nt.toWhom || "N/A")}${nt.noteNo ? ` &bull; ${escapeHtml(nt.noteNo)}` : ""}</div>
             </div>
-            ${nIdx < (options?.notes?.length || 0) - 1 ? '<div class="divider-dotted"></div>' : ""}
+            ${nIdx < sortedNotes.length - 1 ? '<div class="divider-dotted"></div>' : ""}
+          `).join("")}
+        </div>
+      ` : ""}
+
+      ${options?.includeLoans && options?.viewMode === "detailed" && sortedLoans.length > 0 ? `
+        <div class="divider-double"></div>
+        <div class="summary-title">LOAN PAYMENTS (${sortedLoans.length})</div>
+        <div class="divider-solid"></div>
+        <div class="sales-container">
+          ${sortedLoans.map((lp: any, lIdx: number) => `
+            <div class="sale-block" style="text-align: left;">
+              <div class="sale-block-header">
+                <span class="sale-badge">${lIdx + 1}. ${escapeHtml(lp.loanTitle || (typeof lp.loan === "object" ? lp.loan?.title : "Loan Payment"))}</span>
+                <span class="sale-time" style="color: #000000; font-weight: 800;">- Rs. ${Number(lp.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div class="sale-cust">${lp.paymentNo ? `${escapeHtml(lp.paymentNo)} &bull; ` : ""}Method: ${escapeHtml(lp.paymentMethod || "Cash")}</div>
+            </div>
+            ${lIdx < sortedLoans.length - 1 ? '<div class="divider-dotted"></div>' : ""}
           `).join("")}
         </div>
       ` : ""}
@@ -2961,50 +3101,116 @@ export function generateDailySalesReportHtml(
           <span class="summary-label">Total Items Sold:</span>
           <span class="summary-val">${totalItemsCount}</span>
         </div>
-        <div class="grand-total-box">
-          <div class="summary-line">
-            <span class="summary-label">GROSS SALES REVENUE:</span>
-            <span class="summary-val">Rs. ${grandTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
-          ${options?.includeExpenses ? `
-          <div class="summary-line" style="color: #b91c1c;">
-            <span class="summary-label">LESS EXPENSES:</span>
-            <span class="summary-val">- Rs. ${(options.expenseTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>` : ""}
-          ${options?.includeCashInOut ? `
-          <div class="summary-line" style="color: #047857;">
-            <span class="summary-label">ADD CASH IN (+):</span>
-            <span class="summary-val">+ Rs. ${(options.cashInTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
-          <div class="summary-line" style="color: #b91c1c;">
-            <span class="summary-label">LESS CASH OUT (-):</span>
-            <span class="summary-val">- Rs. ${(options.cashOutTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>` : ""}
-          ${options?.includeExpenses || options?.includeCashInOut ? `
-          <div class="summary-line" style="border-top: 1px solid #000; margin-top: 2px; padding-top: 2px; font-weight: 900; font-size: 12px;">
-            <span class="summary-label">FINAL NET REVENUE:</span>
-            <span class="summary-val">Rs. ${(options.netRevenue !== undefined ? options.netRevenue : (grandTotalAmount - (options.includeExpenses ? (options.expenseTotal || 0) : 0) + (options.includeCashInOut ? ((options.cashInTotal || 0) - (options.cashOutTotal || 0)) : 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>` : ""}
-          <div class="summary-line change-line">
-            <span class="summary-label">TOTAL CHANGE GIVEN${changeTransactionsCount > 0 ? ` (${changeTransactionsCount})` : ""}:</span>
-            <span class="summary-val">Rs. ${totalChangeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
+
+        <div class="divider-solid"></div>
+        <div class="summary-line" style="font-size: 12px; font-weight: 900;">
+          <span class="summary-label">SALES REVENUE:</span>
+          <span class="summary-val">Rs. ${grandTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>
-        ${paymentBreakdownHtml ? `
-          <div style="margin-top: 3px; font-size: 10px; font-weight: 800; text-align: left; text-transform: uppercase;">Payment Breakdown:</div>
-          ${paymentBreakdownHtml}
-          ${totalChangeGiven > 0 ? `
-          <div class="summary-line payment-line" style="color: #444;">
-            <span class="summary-label">CHANGE GIVEN:</span>
-            <span class="summary-val">Rs. - ${totalChangeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
-          ${paymentBreakdown["CASH"] ? `
-          <div class="summary-line payment-line" style="font-weight: 900; border-top: 0.5px dashed #666; margin-top: 2px; padding-top: 2px;">
-            <span class="summary-label">NET CASH IN DRAWER:</span>
-            <span class="summary-val">Rs. ${Math.max(0, paymentBreakdown["CASH"] - totalChangeGiven).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>` : ""}
-          ` : ""}
-        ` : ""}
+        <div class="divider-solid"></div>
+
+        <div style="margin-top: 5px; margin-bottom: 2px; font-size: 11px; font-weight: 900; text-align: left; text-transform: uppercase;">TOTAL CASH FLOW:</div>
+        <div class="summary-line">
+          <span class="summary-label">CASH SALES (+):</span>
+          <span class="summary-val">+ Rs. ${netCashSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+        ${cardSalesTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">CARD SALES (+):</span>
+          <span class="summary-val">+ Rs. ${cardSalesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${kokoReceivedTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">KOKO RECEIVED (+):</span>
+          <span class="summary-val">+ Rs. ${kokoReceivedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${otherSalesTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">OTHER SALES (+):</span>
+          <span class="summary-val">+ Rs. ${otherSalesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${cashInTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">ADD CASH IN (+):</span>
+          <span class="summary-val">+ Rs. ${cashInTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${cashOutTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">LESS CASH OUT (-):</span>
+          <span class="summary-val">- Rs. ${cashOutTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${loanPaymentsTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">LESS LOAN PAYMENTS (-):</span>
+          <span class="summary-val">- Rs. ${loanPaymentsTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        <div class="summary-line" style="border-top: 1.5px solid #000000; border-bottom: 1px solid #000000; margin: 4px 0 3px 0; padding: 3px 0; font-weight: 900; font-size: 11.5px;">
+          <span class="summary-label">NET CASH FLOW:</span>
+          <span class="summary-val">Rs. ${netCashFlow.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+
+        ${cardSalesTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">LESS CARD SALES (-):</span>
+          <span class="summary-val">- Rs. ${cardSalesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${kokoReceivedTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">LESS KOKO RECEIVED (-):</span>
+          <span class="summary-val">- Rs. ${kokoReceivedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${otherSalesTotal > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">LESS OTHER NON-CASH (-):</span>
+          <span class="summary-val">- Rs. ${otherSalesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${startingCash > 0 ? `
+        <div class="summary-line">
+          <span class="summary-label">ADD STARTING CASH (+):</span>
+          <span class="summary-val">+ Rs. ${startingCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+
+        <div class="summary-line" style="border-top: 1.5px solid #000000; border-bottom: 1.5px solid #000000; margin: 4px 0 5px 0; padding: 3px 0; font-weight: 900; font-size: 12px;">
+          <span class="summary-label">NET CASH IN DRAWER:</span>
+          <span class="summary-val">Rs. ${netCashInDrawer.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+
+        <div style="margin-top: 5px; font-size: 10.5px; font-weight: 800; text-align: left; text-transform: uppercase;">PAYMENT BREAKDOWN:</div>
+        <div class="summary-line payment-line">
+          <span class="summary-label">CASH:</span>
+          <span class="summary-val">Rs. ${grossCashTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+        ${cardSalesTotal > 0 ? `
+        <div class="summary-line payment-line">
+          <span class="summary-label">CARD:</span>
+          <span class="summary-val">Rs. ${cardSalesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${kokoGrossTotal > 0 ? `
+        <div class="summary-line payment-line">
+          <span class="summary-label">KOKO:</span>
+          <span class="summary-val">Rs. ${kokoGrossTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${Object.keys(otherPaymentBreakdown).map((m) => `
+        <div class="summary-line payment-line">
+          <span class="summary-label">${escapeHtml(m)}:</span>
+          <span class="summary-val">Rs. ${otherPaymentBreakdown[m].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+        `).join("")}
+        ${loanPaymentsTotal > 0 ? `
+        <div class="summary-line payment-line">
+          <span class="summary-label">LOAN PAYMENTS${loanPaymentsCount > 0 ? ` (${loanPaymentsCount})` : ""}:</span>
+          <span class="summary-val">Rs. - ${loanPaymentsTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${totalChangeGiven > 0 ? `
+        <div class="summary-line payment-line">
+          <span class="summary-label">CHANGE GIVEN${changeTransactionsCount > 0 ? ` (${changeTransactionsCount})` : ""}:</span>
+          <span class="summary-val">Rs. - ${totalChangeGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
+        ${totalDiscountGiven > 0 ? `
+        <div class="summary-line payment-line">
+          <span class="summary-label">DISCOUNT GIVEN:</span>
+          <span class="summary-val">Rs. - ${totalDiscountGiven.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>` : ""}
       </div>
 
       <div class="divider-double"></div>
@@ -3137,6 +3343,31 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
   }
 
   const isSales = data.reportType === "sales" || (data.sales && data.sales.length > 0 && (!data.repairs || data.repairs.length === 0));
+
+  // Helper to safely extract epoch timestamp from various date representations
+  const parseReportTimestamp = (item: any): number => {
+    const raw = item?.createdAt || item?.created_at || item?.date || item?.paymentDate || item?.timestamp;
+    if (!raw) return 0;
+    const t = new Date(raw).getTime();
+    return isNaN(t) ? 0 : t;
+  };
+
+  // Sort sales and repairs chronologically (morning/earliest first)
+  const sortedReportSales = Array.isArray(data.sales)
+    ? [...data.sales].sort((a: any, b: any) => {
+        const timeA = parseReportTimestamp(a);
+        const timeB = parseReportTimestamp(b);
+        if (timeA !== timeB) return timeA - timeB;
+        const numA = String(a.saleNumber || a.sale_number || "");
+        const numB = String(b.saleNumber || b.sale_number || "");
+        return numA.localeCompare(numB, undefined, { numeric: true });
+      })
+    : [];
+
+  const sortedReportRepairs = Array.isArray(data.repairs)
+    ? [...data.repairs].sort((a: any, b: any) => parseReportTimestamp(a) - parseReportTimestamp(b))
+    : [];
+
   const defaultMetrics = {
     totalRecords: isSales ? (data.sales?.length || 0) : (data.repairs?.length || 0),
     totalAmount: isSales
@@ -3798,13 +4029,13 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
           </thead>
           <tbody>
             ${isSales ? (
-              (data.sales || []).length === 0 ? `
+              sortedReportSales.length === 0 ? `
                 <tr>
                   <td colspan="8" class="text-center" style="padding: 20px; color: #64748b; font-weight: 600;">
                     No sales match the specified filter criteria.
                   </td>
                 </tr>
-              ` : (data.sales || []).map((sale, idx) => {
+              ` : sortedReportSales.map((sale, idx) => {
                 const sNum = sale.saleNumber || ("#" + String(sale._id || idx + 1).slice(-6));
                 const sDate = sale.createdAt ? new Date(sale.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(sale.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }) : "-";
                 const cName = sale.customer?.name || sale.client?.name || "Walk-in";
@@ -3841,13 +4072,13 @@ export function generateBusinessReportHtml(data: BusinessReportData): string {
                 `;
               }).join("")
             ) : (
-              (data.repairs || []).length === 0 ? `
+              sortedReportRepairs.length === 0 ? `
                 <tr>
                   <td colspan="8" class="text-center" style="padding: 20px; color: #64748b; font-weight: 600;">
                     No repair jobs match the specified filter criteria.
                   </td>
                 </tr>
-              ` : (data.repairs || []).map((repair, idx) => {
+              ` : sortedReportRepairs.map((repair, idx) => {
                 const jNum = repair.jobNumber || ("#" + String(repair._id || idx + 1).slice(-6));
                 const rDate = repair.createdAt ? new Date(repair.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "-";
                 const cName = repair.customer?.name || "Customer";

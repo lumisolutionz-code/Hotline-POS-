@@ -2,6 +2,9 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { PERMISSIONS } from "../constants/permission";
+import { Barcode } from "lucide-react";
+import { PreSessionModal } from "../components/pos";
+import { fetchPreSessionRecords } from "../lib/preSession";
 import logo from "../assets/logo.png";
 const API_URL = (import.meta.env.VITE_API_URL as string) || "https://api.hotlinecellular.lk/api/v1";
 
@@ -14,7 +17,9 @@ export default function Login(): JSX.Element {
   const [branchError, setBranchError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [appVersion, setAppVersion] = useState("1.3.1");
+  const [appVersion, setAppVersion] = useState("1.3.2");
+  const [showPreSessionModal, setShowPreSessionModal] = useState<boolean>(false);
+  const [preSessionCount, setPreSessionCount] = useState<number>(0);
   const navigate = useNavigate();
   const { login, isAuthenticated, hasPermission, user } = useAuth();
 
@@ -60,9 +65,22 @@ export default function Login(): JSX.Element {
     }
   };
 
+  const refreshPreSessionCount = async () => {
+    try {
+      const recs = await fetchPreSessionRecords(branchId);
+      setPreSessionCount(recs.length);
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     fetchBranches();
   }, []);
+
+  useEffect(() => {
+    refreshPreSessionCount();
+  }, [branchId]);
   const redirectBasedOnPermissions = () => {
     // Check which page user should go to
     if (hasPermission(PERMISSIONS.CREATE_SALE)) {
@@ -252,12 +270,40 @@ export default function Login(): JSX.Element {
                 "Sign In"
               )}
             </button>
+
+            {/* Pre-Session Early Sales Action */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPreSessionModal(true)}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-200 dark:border-slate-700 shadow-2xs"
+              >
+                <Barcode className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                <span>Pre-Session</span>
+                {preSessionCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500 text-white animate-pulse">
+                    {preSessionCount} {preSessionCount === 1 ? "item" : "items"}
+                  </span>
+                )}
+              </button>
+            </div>
           </form>
           <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
             Hotline POS System v{appVersion}
           </p>
         </div>
       </div>
+
+      {/* Pre-Session Early Sales Buffer Modal */}
+      <PreSessionModal
+        isOpen={showPreSessionModal}
+        onClose={() => {
+          setShowPreSessionModal(false);
+          refreshPreSessionCount();
+        }}
+        mode="LOGIN"
+        branchId={branchId}
+      />
     </div>
   );
 }

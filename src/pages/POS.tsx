@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { PERMISSIONS } from "../constants/permission";
 import { api } from "../lib/api";
-import { getKeyboardShortcuts, getShopSettings } from "../lib/settings";
+import { getKeyboardShortcuts } from "../lib/settings";
 
 // Global in-memory cache for product variants & live stock items for instant popup opening
 const productVariantsCache = new Map<string, { data: any; timestamp: number }>();
@@ -37,7 +37,15 @@ import {
   SimReloadPanel,
   CashDrawerModal,
   LoansPanel,
+  StockTransferPanel,
+  PreSessionModal,
 } from "../components/pos";
+
+import {
+  fetchPreSessionRecords,
+  getLocalPreSessionRecords,
+  PreSessionRecord,
+} from "../lib/preSession";
 
 import companyIcon from "../assets/company-icon.png";
 import companyLogo from "../assets/logo.png";
@@ -56,6 +64,8 @@ import {
   Shield,
   Globe,
   Banknote,
+  ArrowRightLeft,
+  Clock,
 } from "lucide-react";
 
 const getCategoryIcon = (name: string, className = "w-4 h-4") => {
@@ -129,7 +139,7 @@ const getInitialProducts = (): Product[] => {
 
 export default function POS(): JSX.Element {
   const navigate = useNavigate();
-  const { user, logout, hasPermission } = useAuth();
+  const { user, logout, hasPermission, branchId } = useAuth();
 
   // Permission checks
   const canApplyDiscount = hasPermission(PERMISSIONS.APPLY_DISCOUNT);
@@ -146,6 +156,10 @@ export default function POS(): JSX.Element {
   const canCreateWarrantyClaim = hasPermission(
     PERMISSIONS.CREATE_WARRANTY_CLAIM,
   );
+  const canViewTransfers =
+    hasPermission(PERMISSIONS.VIEW_STOCK_TRANSFERS) ||
+    hasPermission(PERMISSIONS.CREATE_STOCK_TRANSFER);
+  const [showStockTransferPanel, setShowStockTransferPanel] = useState<boolean>(false);
 
   // State with Instant Cache Hydration (Stale-While-Revalidate)
   const [categoryTree, setCategoryTree] = useState<Category[]>(() => getInitialCategoryTree());
@@ -236,6 +250,133 @@ export default function POS(): JSX.Element {
   const [cashDrawerModalMode, setCashDrawerModalMode] = useState<"OPEN" | "VIEW" | "CLOSE">("OPEN");
   const [sessionTimerDisplay, setSessionTimerDisplay] = useState<string>("00:00:00");
   const hasAutoPromptedDrawerRef = useRef<boolean>(false);
+
+  // Pre-Session Buffer State (Early sales before login)
+  const [showPreSessionModal, setShowPreSessionModal] = useState<boolean>(false);
+  const [preSessionCount, setPreSessionCount] = useState<number>(0);
+
+  const refreshPreSessionCount = async () => {
+    try {
+      const activeBranch = branchId || (user?.currentSession?.branch?._id) || undefined;
+      const records = await fetchPreSessionRecords(activeBranch);
+      setPreSessionCount(records.length);
+    } catch {
+      const local = getLocalPreSessionRecords();
+      setPreSessionCount(local.length);
+    }
+  };
+
+  useEffect(() => {
+    refreshPreSessionCount();
+  }, [branchId]);
+
+  const handleMovePreSessionToCart = (record: PreSessionRecord) => {
+    const prodId = (typeof record.product === "object" ? record.product?._id : record.product) || record._id;
+    const targetProd = products.find((p) => p._id === prodId);
+
+    const variantId = (typeof record.variant === "object" ? record.variant?._id : record.variant) || undefined;
+    const stockItemId = (typeof record.stockItem === "object" ? record.stockItem?._id : record.stockItem) || undefined;
+    const serial = (record.imei || record.serialNumber || "").trim();
+    const isImei = Boolean(record.imei || record.trackingType === "IMEI" || (targetProd && isImeiProduct(targetProd)));
+
+    const itemPrice = Number(record.soldPrice) || 0;
+    const stdPrice = Number(record.standardPrice) || itemPrice;
+
+    setCart((prevCart) => {
+      if (serial) {
+        const exists = prevCart.some(
+          (item) => item.serialNumber && item.serialNumber.trim().toLowerCase() === serial.toLowerCase()
+        );
+        if (exists) {
+          showError(`Item with IMEI/Serial "${serial}" is already in the cart!`);
+          return prevCart;
+        }
+      }
+
+      const newItem: CartItem = {
+        ...(targetProd || {}),
+        _id: prodId,
+        name: record.name || targetProd?.name || "Pre-Session Item",
+        itemCode: record.itemCode || targetProd?.itemCode || "",
+        barcode: record.barcode || targetProd?.barcode || "",
+        serialNumber: serial || undefined,
+        sellingPrice: itemPrice,
+        effectivePrice: itemPrice,
+        originalPrice: stdPrice,
+        discountAmount: Math.max(0, stdPrice - itemPrice),
+        quantity: isImei ? 1 : (Number(record.quantity) || 1),
+        variantId: variantId,
+        stockItemId: stockItemId,
+        trackingType: isImei ? "IMEI" : (record.trackingType || targetProd?.trackingType || "QUANTITY"),
+        showWarranty: false,
+      };
+
+      const next = [...prevCart, newItem];
+      cartRef.current = next;
+      showSuccess(`Added "${record.name}" to cart (Rs. ${itemPrice.toLocaleString()})`);
+      return next;
+    });
+
+    refreshPreSessionCount();
+  };
+
+  const handleMoveAllPreSessionToCart = (records: PreSessionRecord[]) => {
+    if (!records || records.length === 0) return;
+
+    setCart((prevCart) => {
+      let nextCart = [...prevCart];
+      let addedCount = 0;
+
+      for (const record of records) {
+        const prodId = (typeof record.product === "object" ? record.product?._id : record.product) || record._id;
+        const targetProd = products.find((p) => p._id === prodId);
+
+        const variantId = (typeof record.variant === "object" ? record.variant?._id : record.variant) || undefined;
+        const stockItemId = (typeof record.stockItem === "object" ? record.stockItem?._id : record.stockItem) || undefined;
+        const serial = (record.imei || record.serialNumber || "").trim();
+        const isImei = Boolean(record.imei || record.trackingType === "IMEI" || (targetProd && isImeiProduct(targetProd)));
+
+        const itemPrice = Number(record.soldPrice) || 0;
+        const stdPrice = Number(record.standardPrice) || itemPrice;
+
+        if (serial) {
+          const exists = nextCart.some(
+            (item) => item.serialNumber && item.serialNumber.trim().toLowerCase() === serial.toLowerCase()
+          );
+          if (exists) {
+            continue;
+          }
+        }
+
+        const newItem: CartItem = {
+          ...(targetProd || {}),
+          _id: prodId,
+          name: record.name || targetProd?.name || "Pre-Session Item",
+          itemCode: record.itemCode || targetProd?.itemCode || "",
+          barcode: record.barcode || targetProd?.barcode || "",
+          serialNumber: serial || undefined,
+          sellingPrice: itemPrice,
+          effectivePrice: itemPrice,
+          originalPrice: stdPrice,
+          discountAmount: Math.max(0, stdPrice - itemPrice),
+          quantity: isImei ? 1 : (Number(record.quantity) || 1),
+          variantId: variantId,
+          stockItemId: stockItemId,
+          trackingType: isImei ? "IMEI" : (record.trackingType || targetProd?.trackingType || "QUANTITY"),
+          showWarranty: false,
+        };
+
+        nextCart.push(newItem);
+        addedCount++;
+      }
+
+      cartRef.current = nextCart;
+      showSuccess(`Moved ${addedCount} pre-session item(s) to cart`);
+      return nextCart;
+    });
+
+    refreshPreSessionCount();
+  };
 
   const fetchCurrentSession = async (silent: boolean = false) => {
     try {
@@ -1034,10 +1175,6 @@ export default function POS(): JSX.Element {
 
   useEffect(() => {
     const handleGlobalScan = (e: KeyboardEvent) => {
-      const settings = getShopSettings();
-      // Allow scanning unless explicitly toggled off (boolean false)
-      if (settings.barcodeEnabled === false) return;
-
       // Ignore modifier keys
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
@@ -1901,11 +2038,219 @@ export default function POS(): JSX.Element {
     }
   };
 
+  const addToCartRef = useRef(addToCart);
+  useEffect(() => {
+    addToCartRef.current = addToCart;
+  });
 
+  // =========================================================================
+  // AUTO-ADD IMEI DIRECTLY TO CART FROM SEARCH BAR
+  // Requirement: If the user searches/types an IMEI in the search bar, and an
+  // active IMEI matching that number exists in the database/stockItems,
+  // it goes directly to the cart WITHOUT having to press Enter or do anything.
+  // Strictly applies ONLY to IMEI numbers (not serial numbers, barcodes, or SKUs).
+  // =========================================================================
+  const isAutoAddingImeiRef = useRef<boolean>(false);
+  const lastAutoAddedImeiRef = useRef<{ imei: string; time: number }>({ imei: "", time: 0 });
 
+  useEffect(() => {
+    const rawQuery = searchQuery.trim();
+    if (!rawQuery) return;
 
+    // IMEI numbers are strictly numeric strings between 8 and 18 digits (standard is 14-16 digits)
+    const cleanQuery = rawQuery.replace(/[\s-]/g, "");
+    if (!/^\d{8,18}$/.test(cleanQuery)) {
+      return;
+    }
 
-  // Generate unique key for cart item (combines product ID with serial number if present)
+    // Do not trigger if any modal/panel is open
+    const isAnyModalOpen =
+      showPaymentModal ||
+      showCashDrawerModal ||
+      showSalesPanel ||
+      showRepairsPanel ||
+      showExpensesPanel ||
+      showReturnsPanel ||
+      showWarrantyPanel ||
+      showVariantModal ||
+      showCustomerRequestModal ||
+      showSimReloadPanel;
+    if (isAnyModalOpen) return;
+
+    const lowerRaw = rawQuery.toLowerCase();
+    const now = Date.now();
+
+    // Prevent duplicate processing
+    if (
+      (lastAutoAddedImeiRef.current.imei.toLowerCase() === lowerRaw ||
+       lastAutoAddedImeiRef.current.imei.toLowerCase() === cleanQuery) &&
+      now - lastAutoAddedImeiRef.current.time < 2000
+    ) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    // STEP 1: Synchronous In-Memory Check (0ms latency)
+    // Strictly check ONLY imei1 and imei2 in loaded products' stockItems (never serialNumber!)
+    const currentProducts = productsRef.current && productsRef.current.length > 0 ? productsRef.current : products;
+    let matchedProd: any = null;
+    let matchedStockItem: any = null;
+
+    for (const p of currentProducts as any[]) {
+      if (Array.isArray(p.stockItems) && p.stockItems.length > 0) {
+        const found = p.stockItems.find((si: any) => {
+          const s1 = si.imei1 ? String(si.imei1).trim().toLowerCase() : "";
+          const s2 = si.imei2 ? String(si.imei2).trim().toLowerCase() : "";
+          const s1Clean = s1.replace(/[\s-]/g, "");
+          const s2Clean = s2.replace(/[\s-]/g, "");
+          return s1 === lowerRaw || s2 === lowerRaw || s1Clean === cleanQuery || s2Clean === cleanQuery;
+        });
+        if (found) {
+          matchedProd = p;
+          matchedStockItem = found;
+          break;
+        }
+      }
+    }
+
+    if (matchedProd && matchedStockItem) {
+      const liveCart = cartRef.current || cart;
+      const effectiveImei = matchedStockItem.imei1 || matchedStockItem.imei2 || rawQuery;
+      const alreadyInCart = liveCart.some(
+        (item) =>
+          (item.serialNumber && String(item.serialNumber).trim().toLowerCase() === effectiveImei.toLowerCase()) ||
+          (item.stockItemId && String(item.stockItemId) === String(matchedStockItem._id))
+      );
+
+      if (alreadyInCart) {
+        showError(`Item with IMEI "${effectiveImei}" is already in the cart!`);
+        lastAutoAddedImeiRef.current = { imei: effectiveImei, time: now };
+        setSearchQuery("");
+        return;
+      }
+
+      // Resolve variant if applicable
+      let variantObj: any = null;
+      if (matchedStockItem.variant && Array.isArray(matchedProd.variants)) {
+        variantObj = matchedProd.variants.find((v: any) =>
+          String(v._id) === String(matchedStockItem.variant?._id || matchedStockItem.variant)
+        );
+      }
+      if (!variantObj && Array.isArray(matchedProd.variants) && matchedProd.variants.length === 1) {
+        variantObj = matchedProd.variants[0];
+      }
+
+      lastAutoAddedImeiRef.current = { imei: effectiveImei, time: now };
+      lastProcessedScanRef.current = { code: effectiveImei, time: now };
+      addToCartRef.current(
+        matchedProd,
+        effectiveImei,
+        variantObj || (typeof matchedStockItem.variant === "object" ? matchedStockItem.variant : undefined),
+        matchedStockItem._id,
+        matchedStockItem.sellingPrice || variantObj?.sellingPrice || matchedProd.sellingPrice,
+        true
+      );
+      setSearchQuery("");
+      return;
+    }
+
+    // STEP 2: Asynchronous Database Check via Backend API
+    // If not in local memory, check the database via /inventory/lookup/imei/:imei
+    // Standard IMEIs are 14-16 digits: check immediately (50ms); otherwise debounce 250ms to let user finish typing
+    const delay = cleanQuery.length >= 14 ? 50 : 250;
+    const timer = setTimeout(async () => {
+      if (isCancelled || isAutoAddingImeiRef.current) return;
+      isAutoAddingImeiRef.current = true;
+
+      try {
+        let res = await api<{ status?: string; data?: { stockItem?: any } }>(
+          `/inventory/lookup/imei/${encodeURIComponent(cleanQuery)}`
+        ).catch(() => null);
+
+        if (!res?.data?.stockItem && rawQuery !== cleanQuery) {
+          res = await api<{ status?: string; data?: { stockItem?: any } }>(
+            `/inventory/lookup/imei/${encodeURIComponent(rawQuery)}`
+          ).catch(() => null);
+        }
+
+        if (isCancelled) return;
+
+        if (res && res.status === "success" && res.data?.stockItem) {
+          const stockItem = res.data.stockItem;
+          const effectiveImei = stockItem.imei1 || stockItem.imei2 || cleanQuery;
+          const liveCart = cartRef.current || cart;
+          const alreadyInCart = liveCart.some(
+            (item) =>
+              (item.serialNumber && String(item.serialNumber).trim().toLowerCase() === effectiveImei.toLowerCase()) ||
+              (item.stockItemId && String(item.stockItemId) === String(stockItem._id))
+          );
+
+          if (alreadyInCart) {
+            showError(`Item with IMEI "${effectiveImei}" is already in the cart!`);
+            lastAutoAddedImeiRef.current = { imei: effectiveImei, time: Date.now() };
+            setSearchQuery("");
+            return;
+          }
+
+          const itemProductId = stockItem.product?._id || stockItem.product || stockItem.stock?.product;
+          let baseProduct = (productsRef.current || products).find((p) => String(p._id) === String(itemProductId));
+
+          if (!baseProduct && stockItem.product) {
+            baseProduct = {
+              _id: String(itemProductId),
+              name: stockItem.product.name || "Product",
+              sku: stockItem.product.sku || stockItem.product.itemCode,
+              sellingPrice: stockItem.product.sellingPrice || stockItem.sellingPrice || 0,
+              costPrice: stockItem.product.costPrice || stockItem.costPrice || 0,
+              stock: stockItem.qty || 1,
+              trackingType: stockItem.product.trackingType || "IMEI",
+              warrantyDuration: stockItem.product.warrantyDuration,
+              warrantyType: stockItem.product.warrantyType,
+            };
+          }
+
+          if (baseProduct) {
+            const addNow = Date.now();
+            lastAutoAddedImeiRef.current = { imei: effectiveImei, time: addNow };
+            lastProcessedScanRef.current = { code: effectiveImei, time: addNow };
+            addToCartRef.current(
+              baseProduct,
+              effectiveImei,
+              stockItem.variant,
+              stockItem._id,
+              stockItem.sellingPrice || stockItem.variant?.sellingPrice || baseProduct.sellingPrice,
+              true
+            );
+            setSearchQuery("");
+          }
+        }
+      } catch (err) {
+        // Silently ignore 404 or non-matching IMEI while typing
+      } finally {
+        isAutoAddingImeiRef.current = false;
+      }
+    }, delay);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    searchQuery,
+    products,
+    cart,
+    showPaymentModal,
+    showCashDrawerModal,
+    showSalesPanel,
+    showRepairsPanel,
+    showExpensesPanel,
+    showReturnsPanel,
+    showWarrantyPanel,
+    showVariantModal,
+    showCustomerRequestModal,
+    showSimReloadPanel,
+  ]);
   const getCartItemKey = (item: CartItem): string => {
     let key = item._id;
     if (item.variantId) key += `_${item.variantId}`;
@@ -2358,7 +2703,7 @@ export default function POS(): JSX.Element {
               <svg className="w-3 h-3 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
               </svg>
-              <span>Request Item</span>
+              <span>Request</span>
             </button>
 
             {/* SIM & Reload */}
@@ -2457,6 +2802,18 @@ export default function POS(): JSX.Element {
               </button>
             )}
 
+            {/* Transfers */}
+            {canViewTransfers && (
+              <button
+                onClick={() => setShowStockTransferPanel(true)}
+                className="flex items-center gap-1 px-2 xl:px-2.5 py-1 xl:py-1.5 bg-[#f0fdfa] hover:bg-[#ccfbf1] text-[#0d9488] border border-[#99f6e4] rounded-lg xl:rounded-xl text-[11px] xl:text-xs font-semibold shrink-0 cursor-pointer shadow-2xs"
+                title="Inter-Branch Stock Transfers"
+              >
+                <ArrowRightLeft className="w-3 h-3 text-[#0d9488]" />
+                <span>Transfers</span>
+              </button>
+            )}
+
             {/* Settings */}
             <button
               onClick={() => navigate("/settings")}
@@ -2467,6 +2824,15 @@ export default function POS(): JSX.Element {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
+            </button>
+
+            {/* Website Direct Login Button (Icon Only, next to Settings) */}
+            <button
+              onClick={handleGoToWebsite}
+              className="flex items-center justify-center w-7 h-7 xl:w-8 xl:h-8 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg xl:rounded-xl text-blue-600 transition-all shadow-2xs shrink-0 cursor-pointer"
+              title="Go to Website Admin Panel"
+            >
+              <Globe className="w-3.5 h-3.5 text-blue-600" />
             </button>
           </div>
 
@@ -2505,16 +2871,6 @@ export default function POS(): JSX.Element {
                   <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-1 ring-white" />
                 </div>
               )}
-            </button>
-
-            {/* Website Direct Login Button */}
-            <button
-              onClick={handleGoToWebsite}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white hover:bg-blue-50/80 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-600 text-[11px] xl:text-xs font-bold transition-all shadow-2xs shrink-0 cursor-pointer"
-              title="Go to Website Admin Panel"
-            >
-              <Globe className="w-3 h-3 text-blue-600" />
-              <span>Website</span>
             </button>
 
             {/* Online Status */}
@@ -2763,14 +3119,36 @@ export default function POS(): JSX.Element {
                   )}
                 </div>
               </div>
-              {cart.length > 0 && (
+
+              <div className="flex items-center gap-1.5">
+                {/* Pre-Session Icon Button in Current Order header */}
                 <button
-                  onClick={clearCart}
-                  className="text-[11px] font-semibold text-red-500 hover:text-red-700 cursor-pointer"
+                  type="button"
+                  onClick={() => setShowPreSessionModal(true)}
+                  className={`relative flex items-center justify-center w-7 h-7 rounded-lg border transition-all cursor-pointer ${
+                    preSessionCount > 0
+                      ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-300 ring-2 ring-amber-400/30"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200"
+                  }`}
+                  title="Pre-Session Early Sales"
                 >
-                  Clear All
+                  <Clock className="w-3.5 h-3.5 text-sky-600" />
+                  {preSessionCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-amber-500 text-white text-[8.5px] font-black flex items-center justify-center ring-1 ring-white animate-pulse">
+                      {preSessionCount}
+                    </span>
+                  )}
                 </button>
-              )}
+
+                {cart.length > 0 && (
+                  <button
+                    onClick={clearCart}
+                    className="text-[11px] font-semibold text-red-500 hover:text-red-700 cursor-pointer ml-1"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Cart Content */}
@@ -3237,6 +3615,16 @@ export default function POS(): JSX.Element {
         />
       )}
 
+      {/* Stock Transfer Panel */}
+      {showStockTransferPanel && (
+        <StockTransferPanel
+          onClose={() => setShowStockTransferPanel(false)}
+          onTransferSuccess={() => {
+            fetchData(true);
+          }}
+        />
+      )}
+
       {/* Repair Payment Modal */}
       {selectedRepairForPayment && (
         <RepairPaymentModal
@@ -3351,6 +3739,7 @@ export default function POS(): JSX.Element {
           categories={categoryTree}
           products={products}
           currentUser={user}
+          activeCashSession={activeCashSession}
         />
       )}
 
@@ -3382,6 +3771,19 @@ export default function POS(): JSX.Element {
           }}
         />
       )}
+
+      {/* Pre-Session Buffer Modal */}
+      <PreSessionModal
+        isOpen={showPreSessionModal}
+        onClose={() => {
+          setShowPreSessionModal(false);
+          refreshPreSessionCount();
+        }}
+        mode="POS"
+        branchId={branchId || (user?.currentSession?.branch?._id) || undefined}
+        onMoveToCart={handleMovePreSessionToCart}
+        onMoveAllToCart={handleMoveAllPreSessionToCart}
+      />
     </div>
   );
 }

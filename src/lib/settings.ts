@@ -12,18 +12,8 @@ export interface ShopSettings {
   phone: string;
   email: string;
   footerMessage: string;
-  barcodeEnabled: boolean;
+  barcodeEnabled?: boolean;
   usePreprintedPaper?: boolean;
-}
-
-export interface ScannerDevice {
-  id: string;
-  name: string;
-  type: "USB HID" | "Bluetooth / Wireless" | "Keyboard Wedge (Auto-Detected)";
-  vendorId?: string | number;
-  productId?: string | number;
-  status: "active" | "paused";
-  lastSeen?: string;
 }
 
 export interface KeyboardShortcuts {
@@ -150,41 +140,6 @@ export function saveShopSettings(settings: ShopSettings): void {
     localStorage.setItem(SHOP_SETTINGS_KEY, JSON.stringify(settings));
   } catch (e) {
     console.error("Failed to save shop settings:", e);
-  }
-}
-
-// ============================================
-// Scanner Devices Functions
-// ============================================
-
-export const SCANNER_DEVICES_KEY = "pos_scanner_devices";
-
-export function getSavedScannerDevices(): ScannerDevice[] {
-  try {
-    const stored = localStorage.getItem(SCANNER_DEVICES_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch (e) {
-    console.error("Failed to load scanner devices:", e);
-  }
-  return [
-    {
-      id: "default-laser-scanner",
-      name: "USB Hardware Barcode Reader (Laser / CCD)",
-      type: "Keyboard Wedge (Auto-Detected)",
-      status: "active",
-      lastSeen: new Date().toLocaleTimeString(),
-    },
-  ];
-}
-
-export function saveScannerDevices(devices: ScannerDevice[]): void {
-  try {
-    localStorage.setItem(SCANNER_DEVICES_KEY, JSON.stringify(devices));
-  } catch (e) {
-    console.error("Failed to save scanner devices:", e);
   }
 }
 

@@ -12,12 +12,14 @@ export { CustomerRequestModal } from './modals/CustomerRequestModal';
 export { ReportsModal } from './modals/ReportsModal';
 export { CashDrawerModal } from './modals/CashDrawerModal';
 export { SaleDetailsModal } from './modals/SaleDetailsModal';
+export { PreSessionModal } from './modals/PreSessionModal';
 
 // Panels
 export { SalesPanel } from './panels/SalesPanel';
 export { RepairsPanel } from './panels/RepairsPanel';
 export { ReturnsPanel } from './panels/ReturnsPanel';
 export { WarrantyPanel } from './panels/WarrantyPanel';
+export { StockTransferPanel } from './panels/StockTransferPanel';
 
 // Types (re-export for convenience)
 export * from '../../types/pos';
